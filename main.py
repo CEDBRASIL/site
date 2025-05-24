@@ -1,176 +1,125 @@
 from flask import Flask, request, jsonify
 import requests
-from requests.auth import HTTPBasicAuth
-import datetime
 import json
+import os
 
 app = Flask(__name__)
 
-# CONFIGURAÇÕES FIXAS
-OURO_BASE_URL = "https://meuappdecursos.com.br/ws/v2"
-BASIC_AUTH = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"
-SUPORTE_WHATSAPP = "61981969018"
-DATA_FIM = (datetime.datetime.now() + datetime.timedelta(days=180)).strftime("%Y-%m-%d")
+# Configurações fixas
+TOKEN_UNIDADE = "SEU_TOKEN_UNIDADE"
+BASIC_AUTH = "Basic SUA_CHAVE_AUTH"
+OURO_BASE_URL = "https://plataforma.cedbrasil.com.br/api"
 
-CHATPRO_TOKEN = "61de03bbdfbfca09d33ca6c2ec9c73f9"
-CHATPRO_INSTANCIA = "chatpro-h9bsk4dljx"
-CHATPRO_URL = f"https://v5.chatpro.com.br/{CHATPRO_INSTANCIA}/api/v1/send_message"
+MAPEAMENTO_CURSOS = {
+    "Informática Essencial": [123],
+    "Excel PRO": [124],
+    "Desigh Gráfico": [125],
+    "Analise & Desenvolvimento de Sistemas": [126],
+    "Inglês Fluente": [127],
+    "Administração": [128],
+    "Especialista em Marketing & Vendas": [129],
+}
 
-CALLMEBOT_APIKEY = "2712587"
-CALLMEBOT_PHONE = "556186660241"
+@app.route("/webhook", methods=["POST"])
+def webhook_herospark():
+    payload = request.get_json(force=True)
+    print("🔔 Payload recebido:", json.dumps(payload, indent=2))
 
-API_URL = "https://meuappdecursos.com.br/ws/v2/unidades/token/"
-ID_UNIDADE = 4158
-KEY = "e6fc583511b1b88c34bd2a2610248a8c"
+    if payload.get("eventType") != "FORM_RESPONSE":
+        return jsonify({"message": "Evento ignorado"}), 200
 
-TOKEN_UNIDADE = None
+    fields = payload.get("data", {}).get("fields", [])
+    nome = cpf = celular = curso_desejado = ""
+    email = "sememail@dominio.com"
 
-def enviar_log_discord(mensagem):
-    try:
-        url = "https://discord.com/api/webhooks/1375956209177333803/AHVyGFUh8cgX5nPZTnPkQCm6q5hQREtNo4ygLGRR3Y-F41INvGd6BDy9HgAlQkS9g3US"
-        payload = {"content": mensagem}
-        headers = {"Content-Type": "application/json"}
-        resp = requests.post(url, data=json.dumps(payload), headers=headers)
-        if resp.status_code == 204:
-            print("✅ Log enviado ao Discord com sucesso.")
-        else:
-            print("❌ Falha ao enviar log para Discord:", resp.text)
-    except Exception as e:
-        print("❌ Erro ao enviar log para Discord:", str(e))
+    for field in fields:
+        label = field.get("label", "").strip().lower()
+        valor = field.get("value")
 
-def enviar_log_whatsapp(mensagem):
-    try:
-        msg_formatada = requests.utils.quote(mensagem)
-        url = f"https://api.callmebot.com/whatsapp.php?phone={CALLMEBOT_PHONE}&text={msg_formatada}&apikey={CALLMEBOT_APIKEY}"
-        resp = requests.get(url)
-        if resp.status_code == 200:
-            print("✅ Log enviado ao WhatsApp com sucesso.")
-        else:
-            print("❌ Falha ao enviar log para WhatsApp:", resp.text)
-    except Exception as e:
-        print("❌ Erro ao enviar log para WhatsApp:", str(e))
-    finally:
-        enviar_log_discord(mensagem)
-
-def obter_token_unidade():
-    global TOKEN_UNIDADE
-    try:
-        resposta = requests.get(API_URL + f"{ID_UNIDADE}", auth=HTTPBasicAuth(KEY, ""))
-        dados = resposta.json()
-        if dados.get("status") == "true":
-            TOKEN_UNIDADE = dados.get("data")["token"]
-            mensagem = "🔁 Token atualizado com sucesso!"
-            print(mensagem)
-            enviar_log_discord(mensagem)
-            return TOKEN_UNIDADE
-        mensagem = f"❌ Erro ao obter token: {dados}"
-        print(mensagem)
-        enviar_log_whatsapp(mensagem)
-    except Exception as e:
-        mensagem = f"❌ Exceção ao obter token: {str(e)}"
-        print(mensagem)
-        enviar_log_whatsapp(mensagem)
-    return None
-
-obter_token_unidade()
-
-@app.before_request
-def log_request_info():
-    mensagem = (
-        f"\n📥 Requisição recebida:\n"
-        f"🔗 URL completa: {request.url}\n"
-        f"📍 Método: {request.method}\n"
-        f"📦 Cabeçalhos: {dict(request.headers)}"
-    )
-    print(mensagem)
-    enviar_log_discord(mensagem)
-
-@app.route('/secure', methods=['GET', 'HEAD'])
-def secure_check():
-    obter_token_unidade()
-    return "🔐 Token atualizado com sucesso via /secure", 200
-
-def buscar_aluno_por_cpf(cpf):
-    try:
-        print(f"🔍 Buscando aluno com CPF: {cpf}")
-        resp = requests.get(
-            f"{OURO_BASE_URL}/alunos",
-            headers={"Authorization": f"Basic {BASIC_AUTH}"},
-            params={"cpf": cpf}
-        )
-        if not resp.ok:
-            print(f"❌ Falha ao buscar aluno: {resp.text}")
-            return None
-        alunos = resp.json().get("data", [])
-        if not alunos:
-            print("❌ Nenhum aluno encontrado com o CPF fornecido.")
-            return None
-        aluno_id = alunos[0].get("id")
-        print(f"✅ Aluno encontrado. ID: {aluno_id}")
-        return aluno_id
-    except Exception as e:
-        print(f"❌ Erro ao buscar aluno: {str(e)}")
-        return None
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    try:
-        payload = request.json
-        print("Payload recebido:", json.dumps(payload, indent=2))
-
-        cpf = None
-        if "data" in payload and "fields" in payload["data"]:
-            for campo in payload["data"]["fields"]:
-                if campo.get("label", "").strip().lower() == "cpf":
-                    cpf_valor = str(campo.get("value", ""))
-                    cpf = cpf_valor.replace(".", "").replace("-", "")
+        if "nome completo" in label:
+            nome = valor
+        elif "cpf" in label:
+            cpf = str(valor).zfill(11)
+        elif "whatsapp" in label or "celular" in label:
+            celular = valor
+        elif "curso desejado" in label:
+            # Pode conter lista
+            curso_ids = field.get("value", [])
+            opcoes = field.get("options", [])
+            curso_desejado = ""
+            for opcao in opcoes:
+                if opcao["id"] in curso_ids:
+                    curso_desejado = opcao["text"]
                     break
 
-        if not cpf:
-            erro_msg = "❌ CPF não encontrado no payload do formulário."
-            print(erro_msg)
-            enviar_log_whatsapp(erro_msg)
-            enviar_log_discord(erro_msg)
-            return jsonify({"error": "CPF não encontrado no payload"}), 400
+    print(f"📋 Dados extraídos: Nome={nome}, CPF={cpf}, Celular={celular}, Curso={curso_desejado}")
 
-        aluno_id = buscar_aluno_por_cpf(cpf)
-        if not aluno_id:
-            erro_msg = "❌ ID do aluno não encontrado para o CPF fornecido."
-            print(erro_msg)
-            enviar_log_whatsapp(erro_msg)
-            enviar_log_discord(erro_msg)
-            return jsonify({"error": "ID do aluno não encontrado."}), 400
+    if not cpf:
+        msg = "❌ CPF não encontrado no payload do formulário."
+        print(msg)
+        return jsonify({"error": msg}), 400
 
-        print(f"🗑️ Excluindo conta do aluno com ID: {aluno_id}")
-        resp_exclusao = requests.delete(
-            f"{OURO_BASE_URL}/alunos/{aluno_id}",
-            headers={"Authorization": f"Basic {BASIC_AUTH}"}
-        )
+    cursos_ids = MAPEAMENTO_CURSOS.get(curso_desejado)
+    if not cursos_ids:
+        msg = f"❌ Curso '{curso_desejado}' não mapeado."
+        print(msg)
+        return jsonify({"error": msg}), 400
 
-        if not resp_exclusao.ok:
-            erro_msg = (
-                f"❌ ERRO AO EXCLUIR ALUNO\n"
-                f"Aluno ID: {aluno_id}\n"
-                f"🔧 Detalhes: {resp_exclusao.text}"
-            )
-            print(erro_msg)
-            enviar_log_whatsapp(erro_msg)
-            enviar_log_discord(erro_msg)
-            return jsonify({"error": "Falha ao excluir aluno", "detalhes": resp_exclusao.text}), 500
+    dados_aluno = {
+        "token": TOKEN_UNIDADE,
+        "nome": nome,
+        "data_nascimento": "2000-01-01",
+        "email": email,
+        "fone": celular,
+        "senha": "123456",
+        "celular": celular,
+        "doc_cpf": cpf,
+        "doc_rg": "00000000000",
+        "pais": "Brasil",
+        "uf": "DF",
+        "cidade": "Brasília",
+        "endereco": "Endereço padrão",
+        "complemento": "",
+        "bairro": "Bairro padrão",
+        "cep": "00000000"
+    }
 
-        msg_exclusao = f"✅ Conta do aluno com ID {aluno_id} excluída com sucesso."
-        print(msg_exclusao)
-        enviar_log_whatsapp(msg_exclusao)
-        enviar_log_discord(msg_exclusao)
+    print("📨 Enviando dados do aluno para a API de cadastro...")
+    resp_cadastro = requests.post(
+        f"{OURO_BASE_URL}/alunos",
+        data=dados_aluno,
+        headers={"Authorization": BASIC_AUTH}
+    )
 
-        return jsonify({"status": "Conta excluída com sucesso"}), 200
+    aluno_response = resp_cadastro.json()
+    print("📨 Resposta do cadastro:", aluno_response)
 
-    except Exception as e:
-        erro_msg = f"❌ Exceção no processamento do webhook: {str(e)}"
-        print(erro_msg)
-        enviar_log_whatsapp(erro_msg)
-        enviar_log_discord(erro_msg)
-        return jsonify({"error": "Erro interno"}), 500
+    if not resp_cadastro.ok or aluno_response.get("status") != "true":
+        return jsonify({"error": "Falha ao criar aluno", "detalhes": aluno_response}), 500
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    aluno_id = aluno_response.get("data", {}).get("id")
+    if not aluno_id:
+        return jsonify({"error": "ID do aluno não encontrado na resposta"}), 500
+
+    dados_matricula = {
+        "token": TOKEN_UNIDADE,
+        "cursos": ",".join(str(cid) for cid in cursos_ids)
+    }
+
+    print(f"📨 Realizando matrícula do aluno {aluno_id}...")
+    resp_matricula = requests.post(
+        f"{OURO_BASE_URL}/alunos/matricula/{aluno_id}",
+        data=dados_matricula,
+        headers={"Authorization": BASIC_AUTH}
+    )
+
+    matricula_response = resp_matricula.json()
+    print("📨 Resposta da matrícula:", matricula_response)
+
+    if not resp_matricula.ok or matricula_response.get("status") != "true":
+        return jsonify({"error": "Falha ao matricular aluno", "detalhes": matricula_response}), 500
+
+    return jsonify({"message": f"Aluno {nome} criado e matriculado com sucesso!"}), 200
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
