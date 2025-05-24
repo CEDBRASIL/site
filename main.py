@@ -27,7 +27,7 @@ TOKEN_UNIDADE = None
 
 def enviar_log_discord(mensagem):
     try:
-        url = "https://discord.com/api/webhooks/1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
+        url = "https://discord.com/api/webhooks/1375956209177333803/AHVyGFUh8cgX5nPZTnPkQCm6q5hQREtNo4ygLGRR3Y-F41INvGd6BDy9HgAlQkS9g3US"
         payload = {"content": mensagem}
         headers = {"Content-Type": "application/json"}
         resp = requests.post(url, data=json.dumps(payload), headers=headers)
@@ -72,7 +72,6 @@ def obter_token_unidade():
         enviar_log_whatsapp(mensagem)
     return None
 
-# Inicializa o token ao iniciar o app
 obter_token_unidade()
 
 @app.before_request
@@ -99,20 +98,16 @@ def buscar_aluno_por_cpf(cpf):
             headers={"Authorization": f"Basic {BASIC_AUTH}"},
             params={"cpf": cpf}
         )
-
         if not resp.ok:
             print(f"❌ Falha ao buscar aluno: {resp.text}")
             return None
-
         alunos = resp.json().get("data", [])
         if not alunos:
             print("❌ Nenhum aluno encontrado com o CPF fornecido.")
             return None
-
         aluno_id = alunos[0].get("id")
         print(f"✅ Aluno encontrado. ID: {aluno_id}")
         return aluno_id
-
     except Exception as e:
         print(f"❌ Erro ao buscar aluno: {str(e)}")
         return None
@@ -123,12 +118,12 @@ def webhook():
         payload = request.json
         print("Payload recebido:", json.dumps(payload, indent=2))
 
-        # Extrair CPF do payload do tally.so (campo com ref 'cpf')
         cpf = None
-        if "answers" in payload:
-            for ans in payload["answers"]:
-                if ans.get("field", {}).get("ref") == "cpf":
-                    cpf = ans.get("text", "").replace(".", "").replace("-", "")
+        if "data" in payload and "fields" in payload["data"]:
+            for campo in payload["data"]["fields"]:
+                if campo.get("label", "").strip().lower() == "cpf":
+                    cpf_valor = str(campo.get("value", ""))
+                    cpf = cpf_valor.replace(".", "").replace("-", "")
                     break
 
         if not cpf:
@@ -176,7 +171,6 @@ def webhook():
         enviar_log_whatsapp(erro_msg)
         enviar_log_discord(erro_msg)
         return jsonify({"error": "Erro interno"}), 500
-
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
