@@ -9,6 +9,9 @@ API_BASE_URL = "https://meuappdecursos.com.br/ws/v2"
 API_KEY = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"  # Token da API
 unidade_token = None  # Token da unidade (atualizado periodicamente)
 
+# ID da unidade da escola
+UNIDADE_ID = 4158
+
 # Função para obter o token da unidade
 def obter_token_unidade():
     global unidade_token
@@ -16,7 +19,10 @@ def obter_token_unidade():
     headers = {
         "Authorization": f"Basic {API_KEY}"
     }
-    response = requests.get(url, headers=headers)
+    payload = {
+        "unidade_id": UNIDADE_ID
+    }
+    response = requests.get(url, headers=headers, params=payload)
     response_data = response.json()
     if response.status_code == 200:
         unidade_token = response_data["data"]["token"]
@@ -58,7 +64,8 @@ def cadastrar_aluno(nome, whatsapp, cpf):
     payload = {
         "nome": nome,
         "whatsapp": whatsapp,
-        "cpf": cpf
+        "cpf": cpf,
+        "unidade_id": UNIDADE_ID
     }
     response = requests.post(url, headers=headers, json=payload)
     response_data = response.json()
