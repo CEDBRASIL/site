@@ -27,7 +27,7 @@ TOKEN_UNIDADE = None
 
 def enviar_log_discord(mensagem):
     try:
-        url = "https://discord.com/api/webhooks/1375956209177333803/AHVyGFUh8cgX5nPZTnPkQCm6q5hQREtNo4ygLGRR3Y-F41INvGd6BDy9HgAlQkS9g3US"
+        url = "https://discord.com/api/webhooks/1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
         payload = {"content": mensagem}
         headers = {"Content-Type": "application/json"}
         resp = requests.post(url, data=json.dumps(payload), headers=headers)
