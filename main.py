@@ -1,125 +1,122 @@
-from flask import Flask, request, jsonify
+from flask import Flask
 import requests
 import json
-import os
 
 app = Flask(__name__)
 
-# Configurações fixas
-TOKEN_UNIDADE = "SEU_TOKEN_UNIDADE"
-BASIC_AUTH = "Basic SUA_CHAVE_AUTH"
-OURO_BASE_URL = "https://plataforma.cedbrasil.com.br/api"
+# Configurações da API Ouro Moderno
+API_BASE_URL = "https://meuappdecursos.com.br/ws/v2"
+API_KEY = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"  # Token da API
+unidade_token = None  # Token da unidade (atualizado periodicamente)
 
-MAPEAMENTO_CURSOS = {
-    "Informática Essencial": [123],
-    "Excel PRO": [124],
-    "Desigh Gráfico": [125],
-    "Analise & Desenvolvimento de Sistemas": [126],
-    "Inglês Fluente": [127],
-    "Administração": [128],
-    "Especialista em Marketing & Vendas": [129],
-}
+# Função para obter o token da unidade
+def obter_token_unidade():
+    global unidade_token
+    url = f"{API_BASE_URL}/unidades/token"
+    headers = {
+        "Authorization": f"Basic {API_KEY}"
+    }
+    response = requests.get(url, headers=headers)
+    response_data = response.json()
+    if response.status_code == 200:
+        unidade_token = response_data["data"]["token"]
+    else:
+        raise Exception(f"Erro ao obter token da unidade: {response_data}")
 
-@app.route("/webhook", methods=["POST"])
-def webhook_herospark():
-    payload = request.get_json(force=True)
-    print("🔔 Payload recebido:", json.dumps(payload, indent=2))
+# Função para enviar logs para o Discord
+def enviar_log_discord(mensagem):
+    webhook_url = "https://discord.com/api/webhooks/1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
+    payload = {"content": mensagem}
+    headers = {"Content-Type": "application/json"}
+    try:
+        response = requests.post(webhook_url, json=payload, headers=headers)
+        if response.status_code != 204:
+            print(f"Erro ao enviar log para o Discord: {response.status_code}, {response.text}")
+    except Exception as e:
+        print(f"Erro ao conectar ao Discord: {str(e)}")
 
-    if payload.get("eventType") != "FORM_RESPONSE":
-        return jsonify({"message": "Evento ignorado"}), 200
+# Endpoint para atualizar o token da unidade
+@app.route('/secure', methods=['GET', 'HEAD'])
+def secure_check():
+    try:
+        obter_token_unidade()
+        mensagem = "🔐 Token atualizado com sucesso via /secure"
+        enviar_log_discord(mensagem)
+        return mensagem, 200
+    except Exception as e:
+        mensagem = f"Erro ao atualizar token: {str(e)}"
+        enviar_log_discord(mensagem)
+        return mensagem, 500
 
-    fields = payload.get("data", {}).get("fields", [])
-    nome = cpf = celular = curso_desejado = ""
-    email = "sememail@dominio.com"
-
-    for field in fields:
-        label = field.get("label", "").strip().lower()
-        valor = field.get("value")
-
-        if "nome completo" in label:
-            nome = valor
-        elif "cpf" in label:
-            cpf = str(valor).zfill(11)
-        elif "whatsapp" in label or "celular" in label:
-            celular = valor
-        elif "curso desejado" in label:
-            # Pode conter lista
-            curso_ids = field.get("value", [])
-            opcoes = field.get("options", [])
-            curso_desejado = ""
-            for opcao in opcoes:
-                if opcao["id"] in curso_ids:
-                    curso_desejado = opcao["text"]
-                    break
-
-    print(f"📋 Dados extraídos: Nome={nome}, CPF={cpf}, Celular={celular}, Curso={curso_desejado}")
-
-    if not cpf:
-        msg = "❌ CPF não encontrado no payload do formulário."
-        print(msg)
-        return jsonify({"error": msg}), 400
-
-    cursos_ids = MAPEAMENTO_CURSOS.get(curso_desejado)
-    if not cursos_ids:
-        msg = f"❌ Curso '{curso_desejado}' não mapeado."
-        print(msg)
-        return jsonify({"error": msg}), 400
-
-    dados_aluno = {
-        "token": TOKEN_UNIDADE,
+# Função para cadastrar aluno na API Ouro Moderno
+def cadastrar_aluno(nome, whatsapp, cpf):
+    url = f"{API_BASE_URL}/alunos"
+    headers = {
+        "Authorization": f"Bearer {unidade_token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
         "nome": nome,
-        "data_nascimento": "2000-01-01",
-        "email": email,
-        "fone": celular,
-        "senha": "123456",
-        "celular": celular,
-        "doc_cpf": cpf,
-        "doc_rg": "00000000000",
-        "pais": "Brasil",
-        "uf": "DF",
-        "cidade": "Brasília",
-        "endereco": "Endereço padrão",
-        "complemento": "",
-        "bairro": "Bairro padrão",
-        "cep": "00000000"
+        "whatsapp": whatsapp,
+        "cpf": cpf
     }
+    response = requests.post(url, headers=headers, json=payload)
+    response_data = response.json()
+    if response.status_code == 201:
+        aluno_id = response_data["data"]["id"]  # Retorna o ID do aluno
+        enviar_log_discord(f"✅ Aluno cadastrado com sucesso: {nome} (ID: {aluno_id})")
+        return aluno_id
+    else:
+        enviar_log_discord(f"❌ Erro ao cadastrar aluno {nome}: {str(response_data)}")
+        raise Exception(f"Erro ao cadastrar aluno: {response_data}")
 
-    print("📨 Enviando dados do aluno para a API de cadastro...")
-    resp_cadastro = requests.post(
-        f"{OURO_BASE_URL}/alunos",
-        data=dados_aluno,
-        headers={"Authorization": BASIC_AUTH}
-    )
-
-    aluno_response = resp_cadastro.json()
-    print("📨 Resposta do cadastro:", aluno_response)
-
-    if not resp_cadastro.ok or aluno_response.get("status") != "true":
-        return jsonify({"error": "Falha ao criar aluno", "detalhes": aluno_response}), 500
-
-    aluno_id = aluno_response.get("data", {}).get("id")
-    if not aluno_id:
-        return jsonify({"error": "ID do aluno não encontrado na resposta"}), 500
-
-    dados_matricula = {
-        "token": TOKEN_UNIDADE,
-        "cursos": ",".join(str(cid) for cid in cursos_ids)
+# Função para matricular aluno em cursos
+def matricular_aluno(aluno_id, curso_ids):
+    url = f"{API_BASE_URL}/matriculas"
+    headers = {
+        "Authorization": f"Bearer {unidade_token}",
+        "Content-Type": "application/json"
     }
+    for curso_id in curso_ids:
+        payload = {
+            "aluno_id": aluno_id,
+            "curso_id": curso_id
+        }
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code != 201:
+            response_data = response.json()
+            enviar_log_discord(f"❌ Erro ao matricular aluno {aluno_id} no curso {curso_id}: {str(response_data)}")
+            raise Exception(f"Erro ao matricular aluno no curso {curso_id}: {response_data}")
 
-    print(f"📨 Realizando matrícula do aluno {aluno_id}...")
-    resp_matricula = requests.post(
-        f"{OURO_BASE_URL}/alunos/matricula/{aluno_id}",
-        data=dados_matricula,
-        headers={"Authorization": BASIC_AUTH}
-    )
+# Função principal para processar o evento do Tally.so
+def processar_evento_tally(evento):
+    # Extrai os dados do evento
+    nome = evento["data"]["fields"][0]["value"]
+    whatsapp = evento["data"]["fields"][1]["value"]
+    cpf = evento["data"]["fields"][2]["value"]
+    cursos_desejados = evento["data"]["fields"][3]["value"]
 
-    matricula_response = resp_matricula.json()
-    print("📨 Resposta da matrícula:", matricula_response)
+    # Mapeia os cursos desejados para IDs da API Ouro Moderno
+    with open("mapeamento dos cursos.txt", "r", encoding="utf-8") as f:
+        mapeamento_cursos = json.loads(f.read().replace("\"", "\\\""))
 
-    if not resp_matricula.ok or matricula_response.get("status") != "true":
-        return jsonify({"error": "Falha ao matricular aluno", "detalhes": matricula_response}), 500
+    curso_ids = []
+    for curso in cursos_desejados:
+        for nome_curso, ids in mapeamento_cursos.items():
+            if curso in nome_curso:
+                curso_ids.extend(ids)
 
-    return jsonify({"message": f"Aluno {nome} criado e matriculado com sucesso!"}), 200
+    # Cadastra o aluno
+    aluno_id = cadastrar_aluno(nome, whatsapp, cpf)
 
+    # Matricula o aluno nos cursos
+    matricular_aluno(aluno_id, curso_ids)
+
+# Exemplo de uso
 if __name__ == "__main__":
+    # Inicializa o token da unidade ao iniciar o servidor
+    obter_token_unidade()
+    with open("Eventlog.json", "r", encoding="utf-8") as f:
+        evento = json.load(f)
+    processar_evento_tally(evento)
     app.run(host="0.0.0.0", port=5000)
