@@ -2,7 +2,6 @@ from flask import Flask, request, jsonify
 import requests
 from requests.auth import HTTPBasicAuth
 import datetime
-import os
 import json
 
 app = Flask(__name__)
@@ -20,23 +19,6 @@ CHATPRO_URL = f"https://v5.chatpro.com.br/{CHATPRO_INSTANCIA}/api/v1/send_messag
 CALLMEBOT_APIKEY = "2712587"
 CALLMEBOT_PHONE = "556186660241"
 
-MAPEAMENTO_CURSOS = {
-    "Excel PRO": [161, 197, 201],
-    "Design Gráfico": [254, 751, 169],
-    "Analista de Tecnologia da Informação (TI)": [590, 176, 239, 203],
-    "Administração": [129, 198, 156, 154],
-    "Inglês Fluente": [263, 280, 281],
-    "Marketing Digital": [734, 236, 441, 199, 780],
-    "teste": [161, 201],
-    "Example plan": [161, 201],
-    "Operador de micro/Maria": [130, 599, 163, 160, 161, 162, 222],
-    "Inglês Kids": [266],
-    "Informática Essencial": [130, 599, 161, 160, 162],
-    "Operador de Micro": [130, 599, 161, 160, 162],
-    "Especialista em Marketing e Vendas 360º": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734],
-    "teste": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734]
-}
-
 API_URL = "https://meuappdecursos.com.br/ws/v2/unidades/token/"
 ID_UNIDADE = 4158
 KEY = "e6fc583511b1b88c34bd2a2610248a8c"
@@ -45,7 +27,7 @@ TOKEN_UNIDADE = None
 
 def enviar_log_discord(mensagem):
     try:
-        url = "https://discord.com/api/webhooks/1374816975628402708/PCaAOawTso2vuYkKQYF39MIzyswaj1Se1RmA8fbKUqS3zBn2i6_WmSSS-f4zwNFcKgP2"
+        url = "https://discord.com/api/webhooks/1375956209177333803/AHVyGFUh8cgX5nPZTnPkQCm6q5hQREtNo4ygLGRR3Y-F41INvGd6BDy9HgAlQkS9g3US"
         payload = {"content": mensagem}
         headers = {"Content-Type": "application/json"}
         resp = requests.post(url, data=json.dumps(payload), headers=headers)
@@ -138,44 +120,63 @@ def buscar_aluno_por_cpf(cpf):
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        print("\n🔔 Webhook recebido com sucesso")
         payload = request.json
-        evento = payload.get("webhook_event_type")
+        print("Payload recebido:", json.dumps(payload, indent=2))
 
-        if evento == "order_refunded":
-            customer = payload.get("Customer", {})
-            cpf = customer.get("CPF", "").replace(".", "").replace("-", "")
+        # Extrair CPF do payload do tally.so (campo com ref 'cpf')
+        cpf = None
+        if "answers" in payload:
+            for ans in payload["answers"]:
+                if ans.get("field", {}).get("ref") == "cpf":
+                    cpf = ans.get("text", "").replace(".", "").replace("-", "")
+                    break
 
-            if not cpf:
-                erro_msg = "❌ CPF do aluno não encontrado no payload de reembolso."
-                print(erro_msg)
-                enviar_log_whatsapp(erro_msg)
-                enviar_log_discord(erro_msg)
-                return jsonify({"error": "CPF do aluno não encontrado."}), 400
+        if not cpf:
+            erro_msg = "❌ CPF não encontrado no payload do formulário."
+            print(erro_msg)
+            enviar_log_whatsapp(erro_msg)
+            enviar_log_discord(erro_msg)
+            return jsonify({"error": "CPF não encontrado no payload"}), 400
 
-            aluno_id = buscar_aluno_por_cpf(cpf)
-            if not aluno_id:
-                erro_msg = "❌ ID do aluno não encontrado para o CPF fornecido."
-                print(erro_msg)
-                enviar_log_whatsapp(erro_msg)
-                enviar_log_discord(erro_msg)
-                return jsonify({"error": "ID do aluno não encontrado."}), 400
+        aluno_id = buscar_aluno_por_cpf(cpf)
+        if not aluno_id:
+            erro_msg = "❌ ID do aluno não encontrado para o CPF fornecido."
+            print(erro_msg)
+            enviar_log_whatsapp(erro_msg)
+            enviar_log_discord(erro_msg)
+            return jsonify({"error": "ID do aluno não encontrado."}), 400
 
-            print(f"🗑️ Excluindo conta do aluno com ID: {aluno_id}")
-            resp_exclusao = requests.delete(
-                f"{OURO_BASE_URL}/alunos/{aluno_id}",
-                headers={"Authorization": f"Basic {BASIC_AUTH}"}
+        print(f"🗑️ Excluindo conta do aluno com ID: {aluno_id}")
+        resp_exclusao = requests.delete(
+            f"{OURO_BASE_URL}/alunos/{aluno_id}",
+            headers={"Authorization": f"Basic {BASIC_AUTH}"}
+        )
+
+        if not resp_exclusao.ok:
+            erro_msg = (
+                f"❌ ERRO AO EXCLUIR ALUNO\n"
+                f"Aluno ID: {aluno_id}\n"
+                f"🔧 Detalhes: {resp_exclusao.text}"
             )
+            print(erro_msg)
+            enviar_log_whatsapp(erro_msg)
+            enviar_log_discord(erro_msg)
+            return jsonify({"error": "Falha ao excluir aluno", "detalhes": resp_exclusao.text}), 500
 
-            if not resp_exclusao.ok:
-                erro_msg = (
-                    f"❌ ERRO AO EXCLUIR ALUNO\n"
-                    f"Aluno ID: {aluno_id}\n"
-                    f"🔧 Detalhes: {resp_exclusao.text}"
-                )
-                print(erro_msg)
-                enviar_log_whatsapp(erro_msg)
-                enviar_log_discord(erro_msg)
-                return jsonify({"error": "Falha ao excluir aluno", "detalhes": resp_exclusao.text}), 500
+        msg_exclusao = f"✅ Conta do aluno com ID {aluno_id} excluída com sucesso."
+        print(msg_exclusao)
+        enviar_log_whatsapp(msg_exclusao)
+        enviar_log_discord(msg_exclusao)
 
-            msg_exclusao = f"✅ Conta
+        return jsonify({"status": "Conta excluída com sucesso"}), 200
+
+    except Exception as e:
+        erro_msg = f"❌ Exceção no processamento do webhook: {str(e)}"
+        print(erro_msg)
+        enviar_log_whatsapp(erro_msg)
+        enviar_log_discord(erro_msg)
+        return jsonify({"error": "Erro interno"}), 500
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
