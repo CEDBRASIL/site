@@ -22,6 +22,8 @@ def obter_token_unidade():
     if response.status_code == 200 and response_data.get("status") == "true":
         unidade_token = response_data["data"]["token"]
     else:
+        # Log detalhado para diagnóstico
+        enviar_log_discord(f"❌ Erro ao obter token da unidade: {response_data}, Status Code: {response.status_code}")
         raise Exception(f"Erro ao obter token da unidade: {response_data}")
 
 # Função para enviar logs para o Discord
