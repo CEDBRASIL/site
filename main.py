@@ -189,9 +189,9 @@ def webhook():
             "doc_telefone": "",
             "complemento_endereco": "",
             "complemento": "",
-            
-
-
+            "uf": "",
+        
+        
 
         }
 
