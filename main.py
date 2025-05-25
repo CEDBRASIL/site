@@ -17,7 +17,11 @@ UNIDADE_ID = 4158
 def obter_token_unidade():
     global unidade_token
     url = f"{API_BASE_URL}/unidades/token/{UNIDADE_ID}"
-    response = requests.get(url, auth=HTTPBasicAuth(API_KEY, ""))
+    headers = {
+        "Authorization": f"Basic {API_KEY}",
+        "Content-Type": "application/json"
+    }
+    response = requests.get(url, headers=headers)
     response_data = response.json()
     if response.status_code == 200 and response_data.get("status") == "true":
         unidade_token = response_data["data"]["token"]
