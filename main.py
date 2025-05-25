@@ -96,6 +96,20 @@ def matricular_aluno(aluno_id, curso_ids):
             enviar_log_discord(f"❌ Erro ao matricular aluno {aluno_id} no curso {curso_id}: {str(response_data)}")
             raise Exception(f"Erro ao matricular aluno no curso {curso_id}: {response_data}")
 
+# Função para carregar o mapeamento de cursos diretamente no código
+def carregar_mapeamento_cursos():
+    return {
+        "Excel PRO": [161, 197, 201],
+        "Design Gráfico": [254, 751, 169],
+        "Analise & Desenvolvimento de Sistemas": [590, 176, 239, 203],
+        "Administração": [129, 198, 156, 154],
+        "Inglês Fluente": [263, 280, 281],
+        "Inglês Kids": [266],
+        "Informática Essencial": [130, 599, 161, 160, 162],
+        "Operador de Micro": [130, 599, 161, 160, 162],
+        "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734]
+    }
+
 # Função principal para processar o evento do Tally.so
 def processar_evento_tally(evento):
     # Extrai os dados do evento
@@ -104,9 +118,8 @@ def processar_evento_tally(evento):
     cpf = evento["data"]["fields"][2]["value"]
     cursos_desejados = evento["data"]["fields"][3]["value"]
 
-    # Mapeia os cursos desejados para IDs da API Ouro Moderno
-    with open("mapeamento dos cursos.txt", "r", encoding="utf-8") as f:
-        mapeamento_cursos = json.loads(f.read().replace("\"", "\\\""))
+    # Carrega o mapeamento de cursos
+    mapeamento_cursos = carregar_mapeamento_cursos()
 
     curso_ids = []
     for curso in cursos_desejados:
