@@ -1,25 +1,21 @@
 """
 main.py – Webhook Tally → Cadastro/Matrícula, WhatsApp e Logs
-
-• Recebe payload do Tally
-• CPF vira login do aluno
-• Matricula nos cursos mapeados
-• Envia mensagem de boas-vindas via ChatPro
-• /secure atualiza token da unidade (ping a cada 5 min)
-• Todas as ações registradas no Discord
+• CPF é login do aluno
+• Cria e matricula aluno via Ouro Moderno (Basic Auth + form data)
+• Envia boas-vindas pelo ChatPro
+• /secure renova token da unidade a cada 5 min
+• Tudo logado no Discord
 """
 
 from flask import Flask, request, jsonify
-import requests
+import requests, json, os
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timedelta
-import os, json
 
 app = Flask(__name__)
 
-# ───────────────────────── CONFIGURAÇÕES ───────────────────────── #
+#───────────────────────── CONFIG ─────────────────────────#
 
-# Mapeamento “Nome do curso” → IDs de planos
 CURSO_PLANO_MAP = {
     "Excel PRO": [161, 197, 201],
     "Design Gráfico": [254, 751, 169],
@@ -29,55 +25,47 @@ CURSO_PLANO_MAP = {
     "Inglês Kids": [266],
     "Informática Essencial": [130, 599, 161, 160, 162],
     "Operador de Micro": [130, 599, 161, 160, 162],
-    "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734]
+    "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734],
 }
 
-# ► API interna da escola
-API_CADASTRO_URL = "https://meuappdecursos.com.br/ws/v2/alunos"
-API_BASIC_TOKEN  = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"
-UNIDADE_ID       = 4158
-API_BEARER_TOKEN = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"
-headers = {
-    "Authorization": f"Basic {API_BASIC_TOKEN}",
-    "Content-Type": "application/json"
-}
+OURO_BASE_URL   = "https://meuappdecursos.com.br/ws/v2"
+BASIC_AUTH_B64  = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"  # usuario:senha(base64); senha é vazia
+UNIDADE_ID      = 4158
 
+# Endpoint para renovar token da unidade
+TOKEN_ENDPOINT  = f"{OURO_BASE_URL}/unidades/token/{UNIDADE_ID}"
+BASIC_KEY_RAW   = "e6fc583511b1b88c34bd2a2610248a8c"  # passa como user, senha vazia
+TOKEN_UNIDADE   = None
 
-# ► Token da unidade (mantido vivo pelo /secure)
-TOKEN_ENDPOINT = "https://meuappdecursos.com.br/ws/v2/unidades/token"
-BASIC_KEY      = "e6fc583511b1b88c34bd2a2610248a8c"
-TOKEN_UNIDADE  = None   # atualizado por obter_token_unidade()
+# ChatPro
+CHATPRO_URL  = "https://v5.chatpro.com.br/chatpro-2a6ajg7xtk/send-message"
+CHATPRO_TOKEN = "e10f158f102cd06bb3e8f135e159dd0f"
 
-# ► ChatPro
-CHATPRO_ENDPOINT = "https://v5.chatpro.com.br/chatpro-2a6ajg7xtk/send-message"
-CHATPRO_TOKEN    = "e10f158f102cd06bb3e8f135e159dd0f"
+# Discord
+DISCORD_WEBHOOK = ("https://discord.com/api/webhooks/"
+                   "1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj")
 
-# ► Discord log
-DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
-
-# ───────────────────────── FUNÇÕES AUXILIARES ───────────────────────── #
+#──────────────────── FUNÇÕES AUXILIARES ────────────────────#
 
 def log_discord(msg: str):
-    """Envia log para Discord"""
     try:
         requests.post(DISCORD_WEBHOOK, json={"content": msg[:1900]})
     except Exception as e:
-        print("Falha log Discord:", e)
+        print("Log Discord falhou:", e)
 
 def obter_token_unidade():
-    """Atualiza TOKEN_UNIDADE usando BasicAuth"""
+    """Renova TOKEN_UNIDADE via BasicAuth (user=BASIC_KEY_RAW, pass='')"""
     global TOKEN_UNIDADE
     try:
-        url = f"{TOKEN_ENDPOINT}/{UNIDADE_ID}"
-        r = requests.get(url, auth=HTTPBasicAuth(BASIC_KEY, ""))
+        r = requests.get(TOKEN_ENDPOINT, auth=HTTPBasicAuth(BASIC_KEY_RAW, ""))
         data = r.json()
         if data.get("status") == "true":
             TOKEN_UNIDADE = data["data"]["token"]
-            log_discord("🔁 Token da unidade atualizado com sucesso.")
+            log_discord("🔁 Token da unidade atualizado.")
         else:
             log_discord(f"❌ Falha ao obter token: {data}")
     except Exception as e:
-        log_discord(f"❌ Exceção ao obter token: {e}")
+        log_discord(f"❌ Exceção token: {e}")
 
 def extrair_valor(fields, label):
     for f in fields:
@@ -85,115 +73,111 @@ def extrair_valor(fields, label):
             return f.get("value")
     return None
 
-def mapear_id_para_nome(opt_id, options):
-    for op in options:
-        if op["id"] == opt_id:
-            return op["text"]
+def map_id_to_name(opt_id, opts):
+    for o in opts:
+        if o["id"] == opt_id:
+            return o["text"]
     return None
 
 def coletar_cursos(fields):
     nomes = []
     for f in fields:
         if f["type"] == "MULTIPLE_CHOICE" and "Curso" in f["label"]:
-            sel = f.get("value", [])
-            options = f.get("options", [])
-            for _id in sel:
-                nome = mapear_id_para_nome(_id, options)
+            for _id in f.get("value", []):
+                nome = map_id_to_name(_id, f.get("options", []))
                 if nome:
                     nomes.append(nome)
     return list(set(nomes))
 
-def ids_planos(cursos):
+def planos_from(nomes):
     ids = []
-    for n in cursos:
+    for n in nomes:
         ids.extend(CURSO_PLANO_MAP.get(n, []))
     return list(set(ids))
 
-def enviar_whatsapp(numero_br12, mensagem):
+def enviar_whatsapp(numero_br12, msg):
     headers = {"Authorization": f"Bearer {CHATPRO_TOKEN}",
                "Content-Type": "application/json"}
-    requests.post(CHATPRO_ENDPOINT, json={"phone": numero_br12, "message": mensagem},
+    requests.post(CHATPRO_URL, json={"phone": numero_br12, "message": msg},
                   headers=headers)
 
-# ───────────────────────── ENDPOINTS ───────────────────────── #
+#───────────────────────── ENDPOINTS ───────────────────────#
 
 @app.route("/secure", methods=["GET", "HEAD"])
 def secure():
-    """Ping a cada 5 min → mantém container ativo e renova token"""
     obter_token_unidade()
-    return "🛡️ Secure ping OK", 200
+    return "🔐 Secure OK", 200
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
         payload = request.json
-        log_discord(f"📥 Webhook recebido:\n```json\n{json.dumps(payload)[:1500]}```")
+        log_discord(f"📥 Webhook:\n```json\n{json.dumps(payload)[:1500]}```")
 
         if payload.get("eventType") != "FORM_RESPONSE":
-            return jsonify({"msg": "Evento ignorado"}), 200
+            return jsonify({"msg": "evento ignorado"}), 200
 
         fields = payload["data"]["fields"]
-        nome     = extrair_valor(fields, "Seu nome completo")
-        whatsapp = extrair_valor(fields, "Whatsapp")
-        cpf      = str(extrair_valor(fields, "CPF"))
+        nome      = extrair_valor(fields, "Seu nome completo")
+        whatsapp  = extrair_valor(fields, "Whatsapp")
+        cpf       = str(extrair_valor(fields, "CPF"))
         if not (nome and whatsapp and cpf):
-            log_discord("❌ Nome/WhatsApp/CPF ausentes")
-            return jsonify({"erro": "Dados ausentes"}), 400
+            log_discord("❌ Nome, CPF ou WhatsApp ausentes")
+            return jsonify({"erro": "dados incompletos"}), 400
 
         cursos_nomes = coletar_cursos(fields)
-        planos_ids   = ids_planos(cursos_nomes)
+        planos_ids   = planos_from(cursos_nomes)
         if not planos_ids:
-            log_discord("❌ Nenhum curso mapeado")
-            return jsonify({"erro": "Cursos inválidos"}), 400
+            log_discord("❌ Cursos não mapeados")
+            return jsonify({"erro": "cursos inválidos"}), 400
 
-        # Montar payload de cadastro (CPF como login)
+        # Payload form-urlencoded exigido pelo Ouro Moderno
         cadastro = {
+            "token": TOKEN_UNIDADE,
             "nome": nome,
             "usuario": cpf,
             "senha": "123456",
-            "cpf": cpf,
-            "whatsapp": whatsapp,
-            "planos": planos_ids,
+            "doc_cpf": cpf,
+            "fone": whatsapp,
+            "celular": whatsapp,
             "unidade_id": UNIDADE_ID,
-            "token": TOKEN_UNIDADE    # se sua API exigir
+            "cursos": ",".join(map(str, planos_ids)),
         }
 
-        headers = {"Authorization": f"Bearer {API_BEARER_TOKEN}",
-                   "Content-Type": "application/json"}
+        headers_basic = {"Authorization": f"Basic {BASIC_AUTH_B64}"}
 
-        resp = requests.post(API_CADASTRO_URL, json=cadastro, headers=headers)
+        resp = requests.post(f"{OURO_BASE_URL}/alunos",
+                             data=cadastro,
+                             headers=headers_basic)
 
-        if resp.status_code not in (200, 201):
+        if resp.ok and resp.json().get("status") == "true":
+            log_discord(f"✅ Aluno {nome} criado/matriculado.")
+        else:
             log_discord(f"❌ Falha cadastro: {resp.text}")
-            return jsonify({"erro": "Cadastro falhou"}), 500
+            return jsonify({"erro": "cadastro falhou"}), 500
 
         # WhatsApp
         numero = "55" + "".join(filter(str.isdigit, whatsapp))[-11:]
         data_pagto = (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y")
-        lista_cursos = "\n".join(f"• {c}" for c in cursos_nomes)
+        lista = "\n".join(f"• {c}" for c in cursos_nomes)
 
-        mensagem = (f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
-                    f"🔑 *Acesso*\n"
-                    f"Login: *{cpf}*\n"
-                    f"Senha: *123456*\n\n"
-                    f"📚 *Cursos adquiridos:*\n{lista_cursos}\n\n"
-                    f"💳 *Data de pagamento:* {data_pagto}\n\n"
-                    "🧑‍🏫 *Grupo da sala de aula:*\n"
-                    "https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP")
+        msg = (f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
+               f"🔑 *Acesso*\nLogin: *{cpf}*\nSenha: *123456*\n\n"
+               f"📚 *Cursos adquiridos:*\n{lista}\n\n"
+               f"💳 *Data de pagamento:* {data_pagto}\n\n"
+               "🧑‍🏫 *Grupo da sala:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP")
 
-        enviar_whatsapp(numero, mensagem)
-        log_discord(f"✅ Aluno {nome} cadastrado, matriculado e notificado.")
+        enviar_whatsapp(numero, msg)
+        log_discord(f"📤 WhatsApp enviado para {numero}")
 
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
-        log_discord(f"❌ Exceção geral: {e}")
-        return jsonify({"erro": "Exceção"}), 500
+        log_discord(f"❌ Exceção: {e}")
+        return jsonify({"erro": "exceção"}), 500
 
+#───────────────────────── MAIN ───────────────────────────#
 
-# ───────────────────────── MAIN ───────────────────────── #
 if __name__ == "__main__":
-    # ao iniciar, tenta pegar token
-    obter_token_unidade()
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    obter_token_unidade()  # tenta logo ao subir
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
