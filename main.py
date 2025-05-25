@@ -142,6 +142,7 @@ def webhook():
             "celular": whatsapp,
             "unidade_id": UNIDADE_ID,
             "cursos": ",".join(map(str, planos_ids)),
+            "data_nascimento": "",
         }
 
         headers_basic = {"Authorization": f"Basic {BASIC_AUTH_B64}"}
