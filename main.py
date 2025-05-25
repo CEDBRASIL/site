@@ -145,14 +145,14 @@ def webhook():
             return jsonify({"erro":"Cursos não mapeados"}), 400
 
         usuario = gerar_usuario_por_cpf(cpf_raw)
-        email_ficticio = f"{usuario}"
+        email_ficticio = f"{usuario}@cedbrasil.com"
 
         cadastro = {
             "token": TOKEN_UNIDADE,
             "nome": nome,
             "usuario": usuario,
             "senha": "123456",
-            "email": "",
+            "email": email_ficticio,
             "doc_cpf": cpf_raw,
             "doc_rg": "",
             "data_nascimento": "2000-01-01",
@@ -190,9 +190,9 @@ def webhook():
 
         msg = (f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
                f"🔑 *Acesso*\nLogin: *{usuario}*\nSenha: *123456*\n\n"
-               f"📚 *Cursos Adquiridos:* \n{lista}\n\n"
+               f"📚 *Cursos:* \n{lista}\n\n"
                f"💳 *Data de pagamento:* {venc}\n\n"
-               "🧑‍🏫 *Grupo da Turma:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP")
+               "🧑‍🏫 *Grupo da Escola/Turma:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP")
 
         enviar_whatsapp(numero, msg)
         log_discord(f"✅ Usuário {usuario} matriculado e WhatsApp enviado.")
