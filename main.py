@@ -29,7 +29,7 @@ CURSO_PLANO_MAP = {
 # Ouro Moderno
 OM_BASE_URL  = "https://meuappdecursos.com.br/ws/v2"
 BASIC_B64    = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"          # (token:)
-UNIDADE_ID   = 4151                                                  # use 4151 p/ seguir a lógica do usuário
+UNIDADE_ID   = 4158                                                  # use 4151 p/ seguir a lógica do usuário
 TOKEN_URL    = f"{OM_BASE_URL}/unidades/token/{UNIDADE_ID}"
 BASIC_KEY_RAW = "e6fc583511b1b88c34bd2a2610248a8c"
 TOKEN_UNIDADE = None
