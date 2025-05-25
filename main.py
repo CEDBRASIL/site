@@ -160,6 +160,24 @@ def webhook():
             "cursos": ",".join(map(str, planos_ids)),
             "data_nascimento": "",
             "doc_rg": "",
+            "cep": "",
+            "endereco": "",
+            "numero": "",
+            "complemento": "",
+            "bairro": "",
+            "cidade": "",
+            "estado": "",
+            "doc_cnh": "", 
+            "doc_cnh_categoria": "",
+            "doc_cnh_validade": "",
+            "doc_cnh_uf": "",
+
+
+
+                        
+
+
+
         }
 
         headers_basic = {"Authorization": f"Basic {BASIC_B64}"}
