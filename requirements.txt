@@ -1,2 +1,5 @@
 flask
 requests
+fastapi
+uvicorn
+httpx
