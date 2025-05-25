@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# ───────────────────────── CONFIG ───────────────────────── #
+# ─────────────── CONFIG ─────────────── #
 
 CURSO_PLANO_MAP = {
     "Excel PRO": [161, 197, 201],
@@ -34,13 +34,29 @@ DISCORD_WEBHOOK = (
     "1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
 )
 
-# ───────────────────── FUNÇÕES ───────────────────── #
+USUARIOS_FILE = os.path.join(os.path.dirname(__file__), "usuarios.json")
+
+# ─────────────── FUNÇÕES ─────────────── #
 
 def log_discord(msg: str):
     try:
         requests.post(DISCORD_WEBHOOK, json={"content": msg[:1900]})
     except Exception:
         pass
+
+def carregar_contador():
+    if not os.path.exists(USUARIOS_FILE):
+        with open(USUARIOS_FILE, "w") as f:
+            json.dump({"last_seq": 0}, f)
+    with open(USUARIOS_FILE) as f:
+        return json.load(f).get("last_seq", 0)
+
+def salvar_contador(seq: int):
+    with open(USUARIOS_FILE, "w") as f:
+        json.dump({"last_seq": seq}, f)
+
+def gerar_usuario_por_cpf(cpf: str):
+    return f"{cpf[:3]}00{cpf[-4:]}{UNIDADE_ID}"
 
 def obter_token_unidade():
     global TOKEN_UNIDADE
@@ -56,7 +72,7 @@ def obter_token_unidade():
 def extrair_valor(fields, label):
     for f in fields:
         if f.get("label") == label:
-            return str(f.get("value")).strip()
+            return f.get("value")
     return None
 
 def mapear_id_para_nome(opt_id, options):
@@ -83,12 +99,23 @@ def ids_planos(cursos):
 
 def enviar_whatsapp(numero_br12, msg):
     headers = {
-        "Authorization": f"Bearer {CHATPRO_TOKEN}",
+        "Authorization": CHATPRO_TOKEN,
         "Content-Type": "application/json",
+        "accept": "application/json"
     }
-    requests.post(CHATPRO_URL, json={"phone": numero_br12, "message": msg}, headers=headers)
 
-# ───────────────────────── ENDPOINTS ───────────────────────── #
+    payload = {
+        "number": numero_br12,
+        "message": msg
+    }
+
+    try:
+        response = requests.post(CHATPRO_URL, json=payload, headers=headers)
+        log_discord(f"📤 Enviando WhatsApp para {numero_br12}\nStatus: {response.status_code}\nResposta:\n```json\n{response.text[:1900]}```")
+    except Exception as e:
+        log_discord(f"❌ Erro no envio de WhatsApp para {numero_br12}: {e}")
+
+# ─────────────── ENDPOINTS ─────────────── #
 
 @app.route("/secure", methods=["GET","HEAD"])
 def secure():
@@ -107,9 +134,9 @@ def webhook():
         fields   = payload["data"]["fields"]
         nome     = extrair_valor(fields, "Seu nome completo")
         whatsapp = extrair_valor(fields, "Whatsapp")
-        cpf      = extrair_valor(fields, "CPF")
+        cpf_raw  = str(extrair_valor(fields, "CPF") or "").zfill(11)
 
-        if not (nome and whatsapp and cpf):
+        if not (nome and whatsapp and cpf_raw and len(cpf_raw) == 11):
             return jsonify({"erro":"Nome, WhatsApp ou CPF ausente"}), 400
 
         cursos_nomes = coletar_cursos(fields)
@@ -117,7 +144,7 @@ def webhook():
         if not planos_ids:
             return jsonify({"erro":"Cursos não mapeados"}), 400
 
-        usuario = cpf
+        usuario = gerar_usuario_por_cpf(cpf_raw)
         email_ficticio = f"{usuario}@cedbrasil.com"
 
         cadastro = {
@@ -126,7 +153,7 @@ def webhook():
             "usuario": usuario,
             "senha": "123456",
             "email": email_ficticio,
-            "doc_cpf": cpf,
+            "doc_cpf": cpf_raw,
             "doc_rg": "",
             "data_nascimento": "2000-01-01",
             "pais": "Brasil",
@@ -156,6 +183,7 @@ def webhook():
             log_discord(f"❌ Falha cadastro: {resp.text}")
             return jsonify({"erro":"cadastro falhou"}), 500
 
+        # WhatsApp
         numero = "55" + "".join(filter(str.isdigit, whatsapp))[-11:]
         venc   = (datetime.now()+timedelta(days=7)).strftime("%d/%m/%Y")
         lista  = "\n".join(f"• {c}" for c in cursos_nomes)
@@ -167,7 +195,7 @@ def webhook():
                "🧑‍🏫 *Grupo:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP")
 
         enviar_whatsapp(numero, msg)
-        log_discord(f"✅ Usuário {usuario} matriculado.")
+        log_discord(f"✅ Usuário {usuario} matriculado e WhatsApp enviado.")
 
         return jsonify({"status":"ok","usuario":usuario}), 200
 
@@ -175,7 +203,7 @@ def webhook():
         log_discord(f"❌ Exceção: {e}")
         return jsonify({"erro":"exceção"}), 500
 
-# ───────────────────────── MAIN ───────────────────────── #
+# ─────────────── MAIN ─────────────── #
 if __name__ == "__main__":
     obter_token_unidade()
     port = int(os.environ.get("PORT", 5000))
