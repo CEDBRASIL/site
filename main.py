@@ -1,11 +1,11 @@
 from flask import Flask, request, jsonify
-import requests, os, json, re
+import requests, os, json
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# ───────────── CONFIG ───────────── #
+# ───────────────────────── CONFIG ───────────────────────── #
 
 CURSO_PLANO_MAP = {
     "Excel PRO": [161, 197, 201],
@@ -21,9 +21,9 @@ CURSO_PLANO_MAP = {
 
 OM_BASE_URL = "https://meuappdecursos.com.br/ws/v2"
 BASIC_B64   = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"
+UNIDADE_ID  = 4158
+TOKEN_URL   = f"{OM_BASE_URL}/unidades/token/{UNIDADE_ID}"
 BASIC_KEY_RAW = "e6fc583511b1b88c34bd2a2610248a8c"
-UNIDADE_ID = 4158
-TOKEN_URL  = f"{OM_BASE_URL}/unidades/token/{UNIDADE_ID}"
 TOKEN_UNIDADE = None
 
 CHATPRO_URL   = "https://v5.chatpro.com.br/chatpro-2a6ajg7xtk/send-message"
@@ -34,7 +34,7 @@ DISCORD_WEBHOOK = (
     "1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
 )
 
-# ───────────── FUNÇÕES ───────────── #
+# ───────────────────── FUNÇÕES ───────────────────── #
 
 def log_discord(msg: str):
     try:
@@ -56,7 +56,7 @@ def obter_token_unidade():
 def extrair_valor(fields, label):
     for f in fields:
         if f.get("label") == label:
-            return f.get("value")
+            return str(f.get("value")).strip()
     return None
 
 def mapear_id_para_nome(opt_id, options):
@@ -88,7 +88,7 @@ def enviar_whatsapp(numero_br12, msg):
     }
     requests.post(CHATPRO_URL, json={"phone": numero_br12, "message": msg}, headers=headers)
 
-# ───────────── ENDPOINTS ───────────── #
+# ───────────────────────── ENDPOINTS ───────────────────────── #
 
 @app.route("/secure", methods=["GET","HEAD"])
 def secure():
@@ -102,28 +102,23 @@ def webhook():
         log_discord(f"📥 Webhook:\n```json\n{json.dumps(payload)[:1500]}```")
 
         if payload.get("eventType") != "FORM_RESPONSE":
-            return jsonify({"msg": "ignorado"}), 200
+            return jsonify({"msg":"ignorado"}), 200
 
         fields   = payload["data"]["fields"]
         nome     = extrair_valor(fields, "Seu nome completo")
         whatsapp = extrair_valor(fields, "Whatsapp")
-        cpf_raw  = str(extrair_valor(fields, "CPF"))
+        cpf      = extrair_valor(fields, "CPF")
 
-        if not (nome and whatsapp and cpf_raw):
-            return jsonify({"erro": "Nome, WhatsApp ou CPF ausente"}), 400
-
-        cpf_limpo = re.sub(r"\D", "", cpf_raw)
-        if len(cpf_limpo) != 11:
-            return jsonify({"erro": "CPF inválido"}), 400
-
-        usuario = cpf_limpo
-        email_ficticio = f"{usuario}@cedbrasil.com"
+        if not (nome and whatsapp and cpf):
+            return jsonify({"erro":"Nome, WhatsApp ou CPF ausente"}), 400
 
         cursos_nomes = coletar_cursos(fields)
         planos_ids   = ids_planos(cursos_nomes)
-
         if not planos_ids:
-            return jsonify({"erro": "Cursos não mapeados"}), 400
+            return jsonify({"erro":"Cursos não mapeados"}), 400
+
+        usuario = cpf
+        email_ficticio = f"{usuario}@cedbrasil.com"
 
         cadastro = {
             "token": TOKEN_UNIDADE,
@@ -131,7 +126,7 @@ def webhook():
             "usuario": usuario,
             "senha": "123456",
             "email": email_ficticio,
-            "doc_cpf": cpf_limpo,
+            "doc_cpf": cpf,
             "doc_rg": "",
             "data_nascimento": "2000-01-01",
             "pais": "Brasil",
@@ -155,33 +150,32 @@ def webhook():
             data = resp.json()
         except Exception:
             log_discord(f"❌ Resposta não-JSON: {resp.text}")
-            return jsonify({"erro": "resposta inválida"}), 500
+            return jsonify({"erro":"resposta inválida"}), 500
 
         if not (resp.ok and data.get("status") == "true"):
             log_discord(f"❌ Falha cadastro: {resp.text}")
-            return jsonify({"erro": "cadastro falhou"}), 500
+            return jsonify({"erro":"cadastro falhou"}), 500
 
         numero = "55" + "".join(filter(str.isdigit, whatsapp))[-11:]
-        venc   = (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y")
+        venc   = (datetime.now()+timedelta(days=7)).strftime("%d/%m/%Y")
         lista  = "\n".join(f"• {c}" for c in cursos_nomes)
 
-        msg = (
-            f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
-            f"🔑 *Acesso*\nLogin: *{usuario}*\nSenha: *123456*\n\n"
-            f"📚 *Cursos:* \n{lista}\n\n"
-            f"💳 *Data de pagamento:* {venc}\n\n"
-            "🧑‍🏫 *Grupo:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP"
-        )
+        msg = (f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
+               f"🔑 *Acesso*\nLogin: *{usuario}*\nSenha: *123456*\n\n"
+               f"📚 *Cursos:* \n{lista}\n\n"
+               f"💳 *Data de pagamento:* {venc}\n\n"
+               "🧑‍🏫 *Grupo:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP")
 
         enviar_whatsapp(numero, msg)
         log_discord(f"✅ Usuário {usuario} matriculado.")
-        return jsonify({"status": "ok", "usuario": usuario}), 200
+
+        return jsonify({"status":"ok","usuario":usuario}), 200
 
     except Exception as e:
         log_discord(f"❌ Exceção: {e}")
-        return jsonify({"erro": "exceção"}), 500
+        return jsonify({"erro":"exceção"}), 500
 
-# ───────────── MAIN ───────────── #
+# ───────────────────────── MAIN ───────────────────────── #
 if __name__ == "__main__":
     obter_token_unidade()
     port = int(os.environ.get("PORT", 5000))
