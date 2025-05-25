@@ -1,11 +1,11 @@
 from flask import Flask, request, jsonify
-import requests, os, json
+import requests, os, json, re
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# ───────────────────────── CONFIG ───────────────────────── #
+# ───────────── CONFIG ───────────── #
 
 CURSO_PLANO_MAP = {
     "Excel PRO": [161, 197, 201],
@@ -21,9 +21,9 @@ CURSO_PLANO_MAP = {
 
 OM_BASE_URL = "https://meuappdecursos.com.br/ws/v2"
 BASIC_B64   = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"
-UNIDADE_ID  = 4158
-TOKEN_URL   = f"{OM_BASE_URL}/unidades/token/{UNIDADE_ID}"
 BASIC_KEY_RAW = "e6fc583511b1b88c34bd2a2610248a8c"
+UNIDADE_ID = 4158
+TOKEN_URL  = f"{OM_BASE_URL}/unidades/token/{UNIDADE_ID}"
 TOKEN_UNIDADE = None
 
 CHATPRO_URL   = "https://v5.chatpro.com.br/chatpro-2a6ajg7xtk/send-message"
@@ -34,31 +34,13 @@ DISCORD_WEBHOOK = (
     "1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
 )
 
-USUARIOS_FILE = os.path.join(os.path.dirname(__file__), "usuarios.json")
-
-# ───────────────────── FUNÇÕES ───────────────────── #
+# ───────────── FUNÇÕES ───────────── #
 
 def log_discord(msg: str):
     try:
         requests.post(DISCORD_WEBHOOK, json={"content": msg[:1900]})
     except Exception:
         pass
-
-def carregar_contador():
-    if not os.path.exists(USUARIOS_FILE):
-        with open(USUARIOS_FILE, "w") as f:
-            json.dump({"last_seq": 0}, f)
-    with open(USUARIOS_FILE) as f:
-        return json.load(f).get("last_seq", 0)
-
-def salvar_contador(seq: int):
-    with open(USUARIOS_FILE, "w") as f:
-        json.dump({"last_seq": seq}, f)
-
-def gerar_usuario():
-    seq = carregar_contador() + 1
-    salvar_contador(seq)
-    return f"202500{seq}{UNIDADE_ID}"
 
 def obter_token_unidade():
     global TOKEN_UNIDADE
@@ -106,9 +88,9 @@ def enviar_whatsapp(numero_br12, msg):
     }
     requests.post(CHATPRO_URL, json={"phone": numero_br12, "message": msg}, headers=headers)
 
-# ───────────────────────── ENDPOINTS ───────────────────────── #
+# ───────────── ENDPOINTS ───────────── #
 
-@app.route("/secure", methods=["GET", "HEAD"])
+@app.route("/secure", methods=["GET","HEAD"])
 def secure():
     obter_token_unidade()
     return "🛡️ Secure OK", 200
@@ -125,17 +107,23 @@ def webhook():
         fields   = payload["data"]["fields"]
         nome     = extrair_valor(fields, "Seu nome completo")
         whatsapp = extrair_valor(fields, "Whatsapp")
+        cpf_raw  = str(extrair_valor(fields, "CPF"))
 
-        if not (nome and whatsapp):
-            return jsonify({"erro": "Nome ou WhatsApp ausente"}), 400
+        if not (nome and whatsapp and cpf_raw):
+            return jsonify({"erro": "Nome, WhatsApp ou CPF ausente"}), 400
+
+        cpf_limpo = re.sub(r"\D", "", cpf_raw)
+        if len(cpf_limpo) != 11:
+            return jsonify({"erro": "CPF inválido"}), 400
+
+        usuario = cpf_limpo
+        email_ficticio = f"{usuario}@cedbrasil.com"
 
         cursos_nomes = coletar_cursos(fields)
         planos_ids   = ids_planos(cursos_nomes)
+
         if not planos_ids:
             return jsonify({"erro": "Cursos não mapeados"}), 400
-
-        usuario = gerar_usuario()
-        email_ficticio = f"{usuario}@cedbrasil.com"
 
         cadastro = {
             "token": TOKEN_UNIDADE,
@@ -143,7 +131,7 @@ def webhook():
             "usuario": usuario,
             "senha": "123456",
             "email": email_ficticio,
-            "doc_cpf": "",
+            "doc_cpf": cpf_limpo,
             "doc_rg": "",
             "data_nascimento": "2000-01-01",
             "pais": "Brasil",
@@ -187,14 +175,13 @@ def webhook():
 
         enviar_whatsapp(numero, msg)
         log_discord(f"✅ Usuário {usuario} matriculado.")
-
         return jsonify({"status": "ok", "usuario": usuario}), 200
 
     except Exception as e:
         log_discord(f"❌ Exceção: {e}")
         return jsonify({"erro": "exceção"}), 500
 
-# ───────────────────────── MAIN ───────────────────────── #
+# ───────────── MAIN ───────────── #
 if __name__ == "__main__":
     obter_token_unidade()
     port = int(os.environ.get("PORT", 5000))
