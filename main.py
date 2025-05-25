@@ -19,25 +19,21 @@ CURSO_PLANO_MAP = {
     "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734],
 }
 
-# Ouro Moderno
 OM_BASE_URL  = "https://meuappdecursos.com.br/ws/v2"
-BASIC_B64    = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"          # (token:)
-UNIDADE_ID   = 4158                                                  # use 4151 p/ seguir a lógica do usuário
+BASIC_B64    = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"
+UNIDADE_ID   = 4158
 TOKEN_URL    = f"{OM_BASE_URL}/unidades/token/{UNIDADE_ID}"
 BASIC_KEY_RAW = "e6fc583511b1b88c34bd2a2610248a8c"
 TOKEN_UNIDADE = None
 
-# ChatPro
 CHATPRO_URL   = "https://v5.chatpro.com.br/chatpro-2a6ajg7xtk/send-message"
 CHATPRO_TOKEN = "e10f158f102cd06bb3e8f135e159dd0f"
 
-# Discord
 DISCORD_WEBHOOK = (
     "https://discord.com/api/webhooks/"
     "1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
 )
 
-# Contador de usuários
 USUARIOS_FILE = os.path.join(os.path.dirname(__file__), "usuarios.json")
 
 # ───────────────────── FUNÇÕES AUXILIARES ───────────────────── #
@@ -49,7 +45,6 @@ def log_discord(msg: str):
         print("Log Discord falhou:", e)
 
 def carregar_contador() -> int:
-    """Lê usuarios.json e devolve last_seq (cria se não existir)."""
     if not os.path.exists(USUARIOS_FILE):
         with open(USUARIOS_FILE, "w") as f:
             json.dump({"last_seq": 0}, f)
@@ -61,7 +56,6 @@ def salvar_contador(seq: int):
         json.dump({"last_seq": seq}, f)
 
 def gerar_usuario() -> str:
-    """Gera próximo usuário 202500{seq}{UNIDADE_ID}."""
     seq = carregar_contador() + 1
     salvar_contador(seq)
     return f"202500{seq}{UNIDADE_ID}"
@@ -153,7 +147,7 @@ def webhook():
             "usuario": usuario,
             "senha": "123456",
             "email": email_ficticio,
-            "doc_cpf": "",          # vazio
+            "doc_cpf": "",
             "fone": whatsapp,
             "celular": whatsapp,
             "unidade_id": UNIDADE_ID,
@@ -171,15 +165,6 @@ def webhook():
             "doc_cnh_categoria": "",
             "doc_cnh_validade": "",
             "doc_cnh_uf": "",
-            "pais": "",
-            
-
-
-
-                        
-
-
-
         }
 
         headers_basic = {"Authorization": f"Basic {BASIC_B64}"}
@@ -190,7 +175,6 @@ def webhook():
             log_discord(f"❌ Falha cadastro: {resp.text}")
             return jsonify({"erro": "cadastro falhou"}), 500
 
-        # WhatsApp
         numero = "55" + "".join(filter(str.isdigit, whatsapp))[-11:]
         data_pagto = (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y")
         lista_cursos = "\n".join(f"• {c}" for c in cursos_nomes)
@@ -204,7 +188,7 @@ def webhook():
         )
 
         enviar_whatsapp(numero, mensagem)
-        log_discord(f"✅ Usuário {usuario} (seq atualizado) matriculado e notificado.")
+        log_discord(f"✅ Usuário {usuario} matriculado e notificado.")
 
         return jsonify({"status": "ok", "usuario": usuario}), 200
 
@@ -212,9 +196,10 @@ def webhook():
         log_discord(f"❌ Exceção: {e}")
         return jsonify({"erro": "exceção"}), 500
 
-
 # ───────────────────────── MAIN ───────────────────────── #
 if __name__ == "__main__":
     obter_token_unidade()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+    log_discord("🚀 Servidor iniciado."
+                )
