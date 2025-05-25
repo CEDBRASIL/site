@@ -143,6 +143,34 @@ def webhook():
             "unidade_id": UNIDADE_ID,
             "cursos": ",".join(map(str, planos_ids)),
             "data_nascimento": "",
+            "email": "",
+            "cep": "",
+            "endereco": "",
+            "numero": "",
+            "complemento": "",
+            "bairro": "",
+            "cidade": "",
+            "estado": "",
+            "observacao": "",
+            "data_matricula": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "data_inicio": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "data_fim": "",
+            "status": "1",  # 1 = ativo
+            "tipo": "1",  # 1 = aluno
+            "forma_pagamento": "1",  # 1 = à vista
+            "valor": "0.00",  # valor zero, pois não é necessário
+            "data_vencimento": "",
+            "data_pagamento": "",
+            "data_cancelamento": "",
+            "motivo_cancelamento": "",
+            "data_reativacao": "",
+            "motivo_reativacao": "",
+            "data_exclusao": "",
+            "motivo_exclusao": "",
+            "data_conclusao": "",
+            "motivo_conclusao": "",
+            "data_transferencia": "",
+            
         }
 
         headers_basic = {"Authorization": f"Basic {BASIC_AUTH_B64}"}
