@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 # Configurações da API Ouro Moderno
 API_BASE_URL = "https://meuappdecursos.com.br/ws/v2"
-API_KEY = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"  # Token da API
+API_KEY = "e6fc583511b1b88c34bd2a2610248a8c"  # Token da API
 unidade_token = None  # Token da unidade (atualizado periodicamente)
 
 # ID da unidade da escola
@@ -55,8 +55,14 @@ def secure_check():
         enviar_log_discord(mensagem)
         return mensagem, 500
 
-# Adiciona logs detalhados e validação do token na função cadastrar_aluno
+# Atualiza a função cadastrar_aluno para garantir que o token seja válido antes de cada requisição
 def cadastrar_aluno(nome, whatsapp, cpf):
+    # Garante que o token está atualizado
+    try:
+        obter_token_unidade()
+    except Exception as e:
+        raise Exception(f"Erro ao atualizar o token antes de cadastrar aluno: {str(e)}")
+
     if not unidade_token:
         raise Exception("Token da unidade não está definido. Certifique-se de que o token foi obtido corretamente.")
 
