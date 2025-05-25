@@ -55,8 +55,11 @@ def secure_check():
         enviar_log_discord(mensagem)
         return mensagem, 500
 
-# Função para cadastrar aluno na API Ouro Moderno
+# Adiciona logs detalhados e validação do token na função cadastrar_aluno
 def cadastrar_aluno(nome, whatsapp, cpf):
+    if not unidade_token:
+        raise Exception("Token da unidade não está definido. Certifique-se de que o token foi obtido corretamente.")
+
     url = f"{API_BASE_URL}/alunos"
     headers = {
         "Authorization": f"Bearer {unidade_token}",
@@ -70,6 +73,11 @@ def cadastrar_aluno(nome, whatsapp, cpf):
     }
     response = requests.post(url, headers=headers, json=payload)
     response_data = response.json()
+
+    # Log detalhado da resposta da API
+    enviar_log_discord(f"📡 Requisição para cadastrar aluno: {payload}")
+    enviar_log_discord(f"📡 Resposta da API: Status {response.status_code}, Body {response_data}")
+
     if response.status_code == 201:
         aluno_id = response_data["data"]["id"]  # Retorna o ID do aluno
         enviar_log_discord(f"✅ Aluno cadastrado com sucesso: {nome} (ID: {aluno_id})")
