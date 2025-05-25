@@ -96,10 +96,12 @@ def wb():
 
     renovar_token()
 
+    data_nasc = "01/01/2000"  # valor padrão para evitar erro de campo obrigatório
+
     cad={
       "token":token_unidade,"nome":nome,"usuario":cpf,"senha":"123456",
       "email":f"{cpf}@ced.com","doc_cpf":cpf,"pais":"Brasil","fone":whatsapp,
-      "celular":whatsapp,"unidade_id":UNIDADE_ID
+      "celular":whatsapp,"unidade_id":UNIDADE_ID,"data_nascimento":data_nasc
     }
     r=requests.post(f"{OM_BASE}/alunos",data=cad,headers={"Authorization":f"Basic {BASIC_B64}"})
     if not (r.ok and r.json().get("status")=="true"):
@@ -127,3 +129,5 @@ def wb():
 if __name__=="__main__":
     renovar_token()
     app.run(host="0.0.0.0",port=5000)
+ 
+    
