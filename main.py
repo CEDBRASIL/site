@@ -1,4 +1,4 @@
-from flask import Flask, request
+from flask import Flask
 import requests, json, base64
 from requests.auth import HTTPBasicAuth
 
@@ -6,22 +6,33 @@ app = Flask(__name__)
 
 # === Configurações ============================================================
 API_BASE_URL = "https://meuappdecursos.com.br/ws/v2"
-API_KEY      = "e6fc583511b1b88c34bd2a2610248a8c"   # coloque em variável de ambiente em produção
+API_KEY      = "e6fc583511b1b88c34bd2a2610248a8c"      # use variável de ambiente em produção
 UNIDADE_ID   = 4158
 
-unidade_token = None   # será renovado periodicamente
+unidade_token = None   # cache global do token da unidade
 
 # === Utilidades ==============================================================
 
 def enviar_log_discord(msg: str) -> None:
-    webhook_url = ("https://discord.com/api/webhooks/"
-                   "1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj")
+    webhook_url = (
+        "https://discord.com/api/webhooks/"
+        "1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
+    )
     try:
         r = requests.post(webhook_url, json={"content": msg}, timeout=10)
         if r.status_code != 204:
             print(f"[Discord] {r.status_code} {r.text}")
     except Exception as exc:
         print(f"[Discord] erro: {exc}")
+
+def basic_auth_headers() -> dict:
+    """Gera cabeçalho Authorization: Basic <base64(API_KEY:)>."""
+    cred_b64 = base64.b64encode(f"{API_KEY}:".encode()).decode()
+    return {
+        "Authorization": f"Basic {cred_b64}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
 
 # === Autenticação ============================================================
 
@@ -30,12 +41,8 @@ def obter_token_unidade() -> None:
     global unidade_token
     url = f"{API_BASE_URL}/unidades/token/{UNIDADE_ID}"
 
-    # Envia Authorization: Basic <base64(username:password)>
     try:
-        resp = requests.get(url,
-                            auth=HTTPBasicAuth(API_KEY, ""),   # senha vazia
-                            headers={"Accept": "application/json"},
-                            timeout=10)
+        resp = requests.get(url, headers=basic_auth_headers(), timeout=10)
         data = resp.json()
         enviar_log_discord(f"📡 Token-req {resp.status_code} {data}")
 
@@ -64,30 +71,42 @@ def secure_check():
 # === Operações de Alunos & Matrículas ========================================
 
 def cadastrar_aluno(nome: str, whatsapp: str, cpf: str) -> int:
-    url = f"{API_BASE_URL}/alunos"
+    """Cria um aluno utilizando Basic Auth + token da unidade no corpo."""
+    obter_token_unidade()                             # garante token válido
 
-    # Teste 1: usar Basic Auth como no /token
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Basic {base64.b64encode(f'{API_KEY}:'.encode()).decode()}"
-    }
-
+    url     = f"{API_BASE_URL}/alunos"
+    headers = basic_auth_headers()
     payload = {
+        "token": unidade_token,                       # <-- necessário
         "nome": nome,
         "whatsapp": whatsapp,
         "cpf": cpf,
-        "unidade_id": UNIDADE_ID
+        "unidade_id": UNIDADE_ID,
     }
 
     r = requests.post(url, headers=headers, json=payload, timeout=10)
     data = r.json()
-
     enviar_log_discord(f"📡 Cadastrar aluno {payload} -> {r.status_code} {data}")
 
     if r.status_code == 201:
         return data["data"]["id"]
     raise RuntimeError(f"Erro ao cadastrar aluno: {data}")
 
+def matricular_aluno(aluno_id: int, curso_ids: list[int]) -> None:
+    """Matrícula cursos – mesmo padrão de autenticação do /alunos."""
+    url     = f"{API_BASE_URL}/matriculas"
+    headers = basic_auth_headers()
+
+    for curso_id in curso_ids:
+        payload = {
+            "token": unidade_token,                   # <-- necessário
+            "aluno_id": aluno_id,
+            "curso_id": curso_id,
+        }
+        r = requests.post(url, headers=headers, json=payload, timeout=10)
+        if r.status_code != 201:
+            enviar_log_discord(f"❌ Matrícula {aluno_id} no {curso_id}: {r.text}")
+            raise RuntimeError(f"Erro ao matricular: {r.text}")
 
 # === Mapas de cursos & processamento Tally ===================================
 
@@ -101,23 +120,28 @@ def carregar_mapeamento_cursos() -> dict[str, list[int]]:
         "Inglês Kids": [266],
         "Informática Essencial": [130, 599, 161, 160, 162],
         "Operador de Micro": [130, 599, 161, 160, 162],
-        "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441,
-                                              780, 828, 829, 236, 734]
+        "Especialista em Marketing & Vendas": [
+            123, 199, 202, 264, 441, 780, 828, 829, 236, 734
+        ],
     }
 
 def processar_evento_tally(evento: dict) -> None:
     campos = evento["data"]["fields"]
-    nome, whatsapp, cpf, cursos_desejados = (campos[0]["value"],
-                                             campos[1]["value"],
-                                             campos[2]["value"],
-                                             campos[3]["value"])
+    nome, whatsapp, cpf, cursos_desejados = (
+        campos[0]["value"],
+        campos[1]["value"],
+        campos[2]["value"],
+        campos[3]["value"],
+    )
 
     mapping = carregar_mapeamento_cursos()
-    curso_ids = [id_
-                 for curso in cursos_desejados
-                 for nome_curso, ids in mapping.items()
-                 if curso in nome_curso
-                 for id_ in ids]
+    curso_ids = [
+        id_
+        for curso in cursos_desejados
+        for nome_curso, ids in mapping.items()
+        if curso in nome_curso
+        for id_ in ids
+    ]
 
     aluno_id = cadastrar_aluno(nome, whatsapp, cpf)
     matricular_aluno(aluno_id, curso_ids)
@@ -125,7 +149,10 @@ def processar_evento_tally(evento: dict) -> None:
 # === App Runner ==============================================================
 
 if __name__ == "__main__":
-    obter_token_unidade()                         # renova token ao subir
+    obter_token_unidade()  # renova token ao subir
+
+    # Teste local: processar um evento salvo em disco
     with open("Eventlog.json", encoding="utf-8") as fh:
         processar_evento_tally(json.load(fh))
+
     app.run(host="0.0.0.0", port=5000)
