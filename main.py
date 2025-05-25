@@ -31,6 +31,7 @@ DISCORD_WEBHOOK = ("https://discord.com/api/webhooks/"
 
 processed_ids = set()
 token_unidade = None
+
 # ───────────── AUX ───────────── #
 def log(msg):
     try:
@@ -90,18 +91,22 @@ def wb():
 
     if not all([nome,whatsapp,cpf]): return{"erro":"falta dado"},400
 
-    cursos   = coletar(f,"Curso Desejado") + coletar(f,"Curso extra")
-    planos   = map_ids(cursos)
+    cursos = coletar(f,"Curso Desejado")
+    cursos += coletar(f,"Curso extra")  # opcional
+    planos = map_ids(cursos)
     if not planos: return{"erro":"curso nao mapeado"},400
 
     renovar_token()
 
-    data_nasc = "01/01/2000"  # valor padrão para evitar erro de campo obrigatório
+    # Campos fixos obrigatórios
+    data_nasc = "01/01/2000"
+    rg        = "0000000"  # valor padrão obrigatório
 
     cad={
       "token":token_unidade,"nome":nome,"usuario":cpf,"senha":"123456",
-      "email":f"{cpf}@ced.com","doc_cpf":cpf,"pais":"Brasil","fone":whatsapp,
-      "celular":whatsapp,"unidade_id":UNIDADE_ID,"data_nascimento":data_nasc
+      "email":f"{cpf}@ced.com","doc_cpf":cpf,"doc_rg":rg,
+      "pais":"Brasil","fone":whatsapp,"celular":whatsapp,
+      "unidade_id":UNIDADE_ID,"data_nascimento":data_nasc
     }
     r=requests.post(f"{OM_BASE}/alunos",data=cad,headers={"Authorization":f"Basic {BASIC_B64}"})
     if not (r.ok and r.json().get("status")=="true"):
@@ -129,5 +134,3 @@ def wb():
 if __name__=="__main__":
     renovar_token()
     app.run(host="0.0.0.0",port=5000)
- 
-    
