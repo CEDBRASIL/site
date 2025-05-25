@@ -64,13 +64,20 @@ def secure_check():
 # === Operações de Alunos & Matrículas ========================================
 
 def cadastrar_aluno(nome: str, whatsapp: str, cpf: str) -> int:
-    obter_token_unidade()  # garante token válido
+    url = f"{API_BASE_URL}/alunos"
 
-    url     = f"{API_BASE_URL}/alunos"
-    headers = {"Authorization": f"Bearer {unidade_token}",
-               "Content-Type": "application/json"}
-    payload = {"nome": nome, "whatsapp": whatsapp,
-               "cpf": cpf, "unidade_id": UNIDADE_ID}
+    # Teste 1: usar Basic Auth como no /token
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Basic {base64.b64encode(f'{API_KEY}:'.encode()).decode()}"
+    }
+
+    payload = {
+        "nome": nome,
+        "whatsapp": whatsapp,
+        "cpf": cpf,
+        "unidade_id": UNIDADE_ID
+    }
 
     r = requests.post(url, headers=headers, json=payload, timeout=10)
     data = r.json()
@@ -78,21 +85,9 @@ def cadastrar_aluno(nome: str, whatsapp: str, cpf: str) -> int:
     enviar_log_discord(f"📡 Cadastrar aluno {payload} -> {r.status_code} {data}")
 
     if r.status_code == 201:
-        aluno_id = data["data"]["id"]
-        return aluno_id
+        return data["data"]["id"]
     raise RuntimeError(f"Erro ao cadastrar aluno: {data}")
 
-def matricular_aluno(aluno_id: int, curso_ids: list[int]) -> None:
-    url     = f"{API_BASE_URL}/matriculas"
-    headers = {"Authorization": f"Bearer {unidade_token}",
-               "Content-Type": "application/json"}
-
-    for curso_id in curso_ids:
-        payload = {"aluno_id": aluno_id, "curso_id": curso_id}
-        r = requests.post(url, headers=headers, json=payload, timeout=10)
-        if r.status_code != 201:
-            enviar_log_discord(f"❌ Erro matrícula {aluno_id} no {curso_id}: {r.text}")
-            raise RuntimeError(f"Erro ao matricular: {r.text}")
 
 # === Mapas de cursos & processamento Tally ===================================
 
