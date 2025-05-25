@@ -21,14 +21,21 @@ def obter_token_unidade():
         "Authorization": f"Basic {API_KEY}",
         "Content-Type": "application/json"
     }
-    response = requests.get(url, headers=headers)
-    response_data = response.json()
-    if response.status_code == 200 and response_data.get("status") == "true":
-        unidade_token = response_data["data"]["token"]
-    else:
-        # Log detalhado para diagnóstico
-        enviar_log_discord(f"❌ Erro ao obter token da unidade: {response_data}, Status Code: {response.status_code}")
-        raise Exception(f"Erro ao obter token da unidade: {response_data}")
+    try:
+        response = requests.get(url, headers=headers)
+        response_data = response.json()
+
+        # Log detalhado da resposta da API
+        enviar_log_discord(f"📡 Requisição para obter token: URL {url}, Headers {headers}")
+        enviar_log_discord(f"📡 Resposta da API: Status {response.status_code}, Body {response_data}")
+
+        if response.status_code == 200 and response_data.get("status") == "true":
+            unidade_token = response_data["data"]["token"]
+        else:
+            raise Exception(f"Erro ao obter token da unidade: {response_data}")
+    except Exception as e:
+        enviar_log_discord(f"❌ Exceção ao obter token: {str(e)}")
+        raise Exception(f"Erro ao obter token da unidade: {str(e)}")
 
 # Função para enviar logs para o Discord
 def enviar_log_discord(mensagem):
