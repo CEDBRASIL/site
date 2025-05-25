@@ -33,8 +33,8 @@ CURSO_PLANO_MAP = {
 }
 
 # ► API interna da escola
-API_CADASTRO_URL = "https://suaapi.com.br/alunos"        # ajuste!
-API_BEARER_TOKEN = "sua_chave_de_api"                    # ajuste!
+API_CADASTRO_URL = "https://meuappdecursos.com.br/ws/v2/alunos"        # ajuste!
+API_BEARER_TOKEN = "e6fc583511b1b88c34bd2a2610248a8c"                    # ajuste!
 UNIDADE_ID       = 4158
 
 # ► Token da unidade (mantido vivo pelo /secure)
