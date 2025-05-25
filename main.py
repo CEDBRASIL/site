@@ -170,7 +170,7 @@ def webhook():
             "data_conclusao": "",
             "motivo_conclusao": "",
             "data_transferencia": "",
-            
+            "doc_rg": "",
         }
 
         headers_basic = {"Authorization": f"Basic {BASIC_AUTH_B64}"}
