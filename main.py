@@ -36,7 +36,7 @@ CURSO_PLANO_MAP = {
 API_CADASTRO_URL = "https://meuappdecursos.com.br/ws/v2/alunos"
 API_BASIC_TOKEN  = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"
 UNIDADE_ID       = 4158
-
+API_BEARER_TOKEN = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"
 headers = {
     "Authorization": f"Basic {API_BASIC_TOKEN}",
     "Content-Type": "application/json"
