@@ -33,9 +33,15 @@ CURSO_PLANO_MAP = {
 }
 
 # ► API interna da escola
-API_CADASTRO_URL = "https://meuappdecursos.com.br/ws/v2/alunos"        # ajuste!
-API_BEARER_TOKEN = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"                    # ajuste!
+API_CADASTRO_URL = "https://meuappdecursos.com.br/ws/v2/alunos"
+API_BASIC_TOKEN  = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"
 UNIDADE_ID       = 4158
+
+headers = {
+    "Authorization": f"Basic {API_BASIC_TOKEN}",
+    "Content-Type": "application/json"
+}
+
 
 # ► Token da unidade (mantido vivo pelo /secure)
 TOKEN_ENDPOINT = "https://meuappdecursos.com.br/ws/v2/unidades/token"
