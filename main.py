@@ -171,6 +171,25 @@ def webhook():
             "motivo_conclusao": "",
             "data_transferencia": "",
             "doc_rg": "",
+            "pais": "",
+            "doc_orgao_expedidor": "",
+            "doc_data_expedicao": "",
+            "doc_data_nascimento": "",
+            "doc_estado_civil": "",
+            "doc_nacionalidade": "",
+            "doc_nome_pai": "",
+            "doc_nome_mae": "",
+            "doc_sexo": "",
+            "doc_raca": "",
+            "doc_deficiencia": "",
+            "doc_observacao": "",
+            "doc_tipo_sanguineo": "",
+            "doc_alergia": "",
+            "doc_observacao": "",
+            "doc_telefone": "",
+            
+
+
         }
 
         headers_basic = {"Authorization": f"Basic {BASIC_AUTH_B64}"}
