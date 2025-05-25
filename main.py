@@ -1,10 +1,3 @@
-"""
-main.py – Webhook Tally → Cadastro OM, WhatsApp, Logs
-• CPF/E-mail não são solicitados
-• 'usuario' gerado como 202500{seq}{UNIDADE_ID}
-• Contador salvo em usuarios.json
-"""
-
 from flask import Flask, request, jsonify
 import requests, os, json
 from requests.auth import HTTPBasicAuth
