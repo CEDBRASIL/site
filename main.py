@@ -41,8 +41,8 @@ USUARIOS_FILE = os.path.join(os.path.dirname(__file__), "usuarios.json")
 def log_discord(msg: str):
     try:
         requests.post(DISCORD_WEBHOOK, json={"content": msg[:1900]})
-    except Exception as e:
-        print("Log Discord falhou:", e)
+    except Exception:
+        pass  # se Discord falhar, não interrompe o fluxo
 
 def carregar_contador() -> int:
     if not os.path.exists(USUARIOS_FILE):
@@ -150,31 +150,26 @@ def webhook():
             "doc_cpf": "",
             "fone": whatsapp,
             "celular": whatsapp,
+            "pais": "Brasil",       # ← CAMPO OBRIGATÓRIO ATENDIDO
             "unidade_id": UNIDADE_ID,
             "cursos": ",".join(map(str, planos_ids)),
-            "data_nascimento": "",
-            "doc_rg": "",
-            "cep": "",
-            "endereco": "",
-            "numero": "",
-            "complemento": "",
-            "bairro": "",
-            "cidade": "",
-            "estado": "",
-            "doc_cnh": "", 
-            "doc_cnh_categoria": "",
-            "doc_cnh_validade": "",
-            "doc_cnh_uf": "",
         }
 
         headers_basic = {"Authorization": f"Basic {BASIC_B64}"}
 
         resp = requests.post(f"{OM_BASE_URL}/alunos", data=cadastro, headers=headers_basic)
 
-        if not (resp.ok and resp.json().get("status") == "true"):
+        try:
+            data = resp.json()
+        except Exception:
+            log_discord(f"❌ Resposta não JSON: {resp.text}")
+            return jsonify({"erro": "resposta inválida"}), 500
+
+        if not (resp.ok and data.get("status") == "true"):
             log_discord(f"❌ Falha cadastro: {resp.text}")
             return jsonify({"erro": "cadastro falhou"}), 500
 
+        # WhatsApp
         numero = "55" + "".join(filter(str.isdigit, whatsapp))[-11:]
         data_pagto = (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y")
         lista_cursos = "\n".join(f"• {c}" for c in cursos_nomes)
@@ -201,5 +196,3 @@ if __name__ == "__main__":
     obter_token_unidade()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-    log_discord("🚀 Servidor iniciado."
-                )
