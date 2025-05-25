@@ -1,158 +1,132 @@
-from flask import Flask
-import requests, json, base64
-from requests.auth import HTTPBasicAuth
+from fastapi import FastAPI, Request, HTTPException
+import httpx
+import asyncio
 
-app = Flask(__name__)
+app = FastAPI()
 
-# === Configurações ============================================================
-API_BASE_URL = "https://meuappdecursos.com.br/ws/v2"
-API_KEY      = "e6fc583511b1b88c34bd2a2610248a8c"      # use variável de ambiente em produção
-UNIDADE_ID   = 4158
+API_BASE = "https://meuappdecursos.com.br/ws/v2"
+CHATPRO_INSTANCIA = "chatpro-2a6ajg7xtk"
+CHATPRO_TOKEN = "e10f158f102cd06bb3e8f135e159dd0f"
+CHATPRO_ENDPOINT = f"https://v5.chatpro.com.br/{CHATPRO_INSTANCIA}/send-message"
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
 
-unidade_token = None   # cache global do token da unidade
+COURSE_MAP = {
+    "Excel PRO": [161, 197, 201],
+    "Design Gráfico": [254, 751, 169],
+    "Analise & Desenvolvimento de Sistemas": [590, 176, 239, 203],
+    "Administração": [129, 198, 156, 154],
+    "Inglês Fluente": [263, 280, 281],
+    "Inglês Kids": [266],
+    "Informática Essencial": [130, 599, 161, 160, 162],
+    "Operador de Micro": [130, 599, 161, 160, 162],
+    "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734]
+}
 
-# === Utilidades ==============================================================
+async def send_discord_log(message: str):
+    async with httpx.AsyncClient() as client:
+        try:
+            await client.post(DISCORD_WEBHOOK_URL, json={"content": message})
+        except Exception as e:
+            print(f"Erro ao enviar log para Discord: {e}")
 
-def enviar_log_discord(msg: str) -> None:
-    webhook_url = (
-        "https://discord.com/api/webhooks/"
-        "1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
-    )
-    try:
-        r = requests.post(webhook_url, json={"content": msg}, timeout=10)
-        if r.status_code != 204:
-            print(f"[Discord] {r.status_code} {r.text}")
-    except Exception as exc:
-        print(f"[Discord] erro: {exc}")
+def get_course_text_by_id(id_, options):
+    for option in options:
+        if option["id"] == id_:
+            return option["text"]
+    return None
 
-def basic_auth_headers() -> dict:
-    """Gera cabeçalho Authorization: Basic <base64(API_KEY:)>."""
-    cred_b64 = base64.b64encode(f"{API_KEY}:".encode()).decode()
-    return {
-        "Authorization": f"Basic {cred_b64}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-# === Autenticação ============================================================
-
-def obter_token_unidade() -> None:
-    """Renova o token da unidade e mantém em cache global."""
-    global unidade_token
-    url = f"{API_BASE_URL}/unidades/token/{UNIDADE_ID}"
-
-    try:
-        resp = requests.get(url, headers=basic_auth_headers(), timeout=10)
-        data = resp.json()
-        enviar_log_discord(f"📡 Token-req {resp.status_code} {data}")
-
-        if resp.status_code == 200 and data.get("status") == "true":
-            unidade_token = data["data"]["token"]
-        else:
-            raise RuntimeError(f"Token não obtido: {data}")
-    except Exception as exc:
-        enviar_log_discord(f"❌ Exceção ao obter token: {exc}")
-        raise
-
-# === Endpoints internos ======================================================
-
-@app.route("/secure", methods=["GET", "HEAD"])
-def secure_check():
-    try:
-        obter_token_unidade()
-        msg = "🔐 Token atualizado com sucesso"
-        enviar_log_discord(msg)
-        return msg, 200
-    except Exception as exc:
-        msg = f"Erro ao atualizar token: {exc}"
-        enviar_log_discord(msg)
-        return msg, 500
-
-# === Operações de Alunos & Matrículas ========================================
-
-def cadastrar_aluno(nome: str, whatsapp: str, cpf: str) -> int:
-    """Cria um aluno utilizando Basic Auth + token da unidade no corpo."""
-    obter_token_unidade()                             # garante token válido
-
-    url     = f"{API_BASE_URL}/alunos"
-    headers = basic_auth_headers()
+async def criar_aluno(nome: str, whatsapp: str, cpf: str):
     payload = {
-        "token": unidade_token,                       # <-- necessário
-        "nome": nome,
+        "nome_completo": nome,
         "whatsapp": whatsapp,
-        "cpf": cpf,
-        "unidade_id": UNIDADE_ID,
+        "cpf": cpf
     }
-
-    r = requests.post(url, headers=headers, json=payload, timeout=10)
-    data = r.json()
-    enviar_log_discord(f"📡 Cadastrar aluno {payload} -> {r.status_code} {data}")
-
-    if r.status_code == 201:
+    async with httpx.AsyncClient() as client:
+        res = await client.post(f"{API_BASE}/alunos", json=payload)
+        if res.status_code != 200:
+            raise Exception(f"Erro ao criar aluno: {res.text}")
+        data = res.json()
+        if not data.get("status") == "true":
+            raise Exception(f"Falha na criação do aluno: {data}")
         return data["data"]["id"]
-    raise RuntimeError(f"Erro ao cadastrar aluno: {data}")
 
-def matricular_aluno(aluno_id: int, curso_ids: list[int]) -> None:
-    """Matrícula cursos – mesmo padrão de autenticação do /alunos."""
-    url     = f"{API_BASE_URL}/matriculas"
-    headers = basic_auth_headers()
+async def matricular_aluno(id_aluno: int, id_curso: int):
+    payload = {"curso_id": id_curso}  # Ajuste se a API pedir outro formato
+    async with httpx.AsyncClient() as client:
+        res = await client.post(f"{API_BASE}/alunos/matricula/{id_aluno}", json=payload)
+        if res.status_code != 200:
+            raise Exception(f"Erro ao matricular aluno: {res.text}")
+        data = res.json()
+        if not data.get("status") == "true":
+            raise Exception(f"Falha na matrícula: {data}")
+        return data
 
-    for curso_id in curso_ids:
-        payload = {
-            "token": unidade_token,                   # <-- necessário
-            "aluno_id": aluno_id,
-            "curso_id": curso_id,
-        }
-        r = requests.post(url, headers=headers, json=payload, timeout=10)
-        if r.status_code != 201:
-            enviar_log_discord(f"❌ Matrícula {aluno_id} no {curso_id}: {r.text}")
-            raise RuntimeError(f"Erro ao matricular: {r.text}")
-
-# === Mapas de cursos & processamento Tally ===================================
-
-def carregar_mapeamento_cursos() -> dict[str, list[int]]:
-    return {
-        "Excel PRO": [161, 197, 201],
-        "Design Gráfico": [254, 751, 169],
-        "Analise & Desenvolvimento de Sistemas": [590, 176, 239, 203],
-        "Administração": [129, 198, 156, 154],
-        "Inglês Fluente": [263, 280, 281],
-        "Inglês Kids": [266],
-        "Informática Essencial": [130, 599, 161, 160, 162],
-        "Operador de Micro": [130, 599, 161, 160, 162],
-        "Especialista em Marketing & Vendas": [
-            123, 199, 202, 264, 441, 780, 828, 829, 236, 734
-        ],
+async def enviar_whatsapp(whatsapp: str, mensagem: str):
+    numero = ''.join(filter(str.isdigit, whatsapp))
+    payload = {
+        "phone": numero,
+        "message": mensagem
     }
+    headers = {"Authorization": f"Bearer {CHATPRO_TOKEN}"}
+    async with httpx.AsyncClient() as client:
+        res = await client.post(CHATPRO_ENDPOINT, json=payload, headers=headers)
+        if res.status_code != 200:
+            raise Exception(f"Erro ao enviar WhatsApp: {res.text}")
+        return res.json()
 
-def processar_evento_tally(evento: dict) -> None:
-    campos = evento["data"]["fields"]
-    nome, whatsapp, cpf, cursos_desejados = (
-        campos[0]["value"],
-        campos[1]["value"],
-        campos[2]["value"],
-        campos[3]["value"],
-    )
+@app.post("/webhook/tally")
+async def webhook_tally(request: Request):
+    try:
+        body = await request.json()
+        data = body.get("data", {})
+        fields = data.get("fields", [])
 
-    mapping = carregar_mapeamento_cursos()
-    curso_ids = [
-        id_
-        for curso in cursos_desejados
-        for nome_curso, ids in mapping.items()
-        if curso in nome_curso
-        for id_ in ids
-    ]
+        nome = next((f["value"] for f in fields if f["label"] == "Seu nome completo"), None)
+        whatsapp = next((f["value"] for f in fields if f["label"] == "Whatsapp"), None)
+        cpf = next((f["value"] for f in fields if f["label"] == "CPF"), None)
 
-    aluno_id = cadastrar_aluno(nome, whatsapp, cpf)
-    matricular_aluno(aluno_id, curso_ids)
+        curso_desejado_field = next((f for f in fields if f["label"] == "Curso Desejado"), None)
+        cursos_extras_field = next((f for f in fields if f["label"] == "Curso extra (Adicional de R$5.00 na assinatura)"), None)
 
-# === App Runner ==============================================================
+        if not nome or not whatsapp:
+            await send_discord_log("Dados incompletos: nome ou whatsapp não informado.")
+            raise HTTPException(status_code=400, detail="Dados incompletos")
 
-if __name__ == "__main__":
-    obter_token_unidade()  # renova token ao subir
+        curso_desejado_ids = curso_desejado_field.get("value", []) if curso_desejado_field else []
+        cursos_extras_ids = cursos_extras_field.get("value", []) if cursos_extras_field else []
 
-    # Teste local: processar um evento salvo em disco
-    with open("Eventlog.json", encoding="utf-8") as fh:
-        processar_evento_tally(json.load(fh))
+        curso_desejado_nomes = [get_course_text_by_id(id_, curso_desejado_field["options"]) for id_ in curso_desejado_ids if curso_desejado_field]
+        cursos_extras_nomes = [get_course_text_by_id(id_, cursos_extras_field["options"]) for id_ in cursos_extras_ids if cursos_extras_field]
 
-    app.run(host="0.0.0.0", port=5000)
+        todos_cursos_nomes = [c for c in curso_desejado_nomes + cursos_extras_nomes if c]
+
+        if len(todos_cursos_nomes) == 0:
+            await send_discord_log(f"Nenhum curso selecionado para o aluno {nome}")
+            raise HTTPException(status_code=400, detail="Nenhum curso selecionado")
+
+        todos_cursos_ids = []
+        for curso in todos_cursos_nomes:
+            ids = COURSE_MAP.get(curso)
+            if ids:
+                todos_cursos_ids.extend(ids)
+
+        if len(todos_cursos_ids) == 0:
+            await send_discord_log(f"Cursos selecionados não possuem IDs válidos para o aluno {nome}")
+            raise HTTPException(status_code=400, detail="Cursos inválidos")
+
+        id_aluno = await criar_aluno(nome, whatsapp, str(cpf))
+        await send_discord_log(f"Aluno criado: {nome} - ID: {id_aluno}")
+
+        for curso_id in todos_cursos_ids:
+            await matricular_aluno(id_aluno, curso_id)
+            await send_discord_log(f"Aluno {nome} matriculado no curso ID: {curso_id}")
+
+        mensagem = f"Olá {nome}, sua matrícula foi realizada com sucesso em nossos cursos. Seja bem-vindo(a)!"
+        await enviar_whatsapp(whatsapp, mensagem)
+        await send_discord_log(f"Mensagem WhatsApp enviada para {whatsapp}")
+
+        return {"status": "ok", "message": "Matrícula concluída"}
+
+    except Exception as e:
+        await send_discord_log(f"Erro no webhook: {str(e)}")
+        raise HTTPException(status_code=500, detail="Erro interno")
