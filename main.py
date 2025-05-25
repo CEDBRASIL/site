@@ -19,10 +19,10 @@ CURSO_PLANO_MAP = {
     "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734],
 }
 
-OM_BASE_URL  = "https://meuappdecursos.com.br/ws/v2"
-BASIC_B64    = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"
-UNIDADE_ID   = 4158
-TOKEN_URL    = f"{OM_BASE_URL}/unidades/token/{UNIDADE_ID}"
+OM_BASE_URL = "https://meuappdecursos.com.br/ws/v2"
+BASIC_B64   = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"   # (token:)
+UNIDADE_ID  = 4158
+TOKEN_URL   = f"{OM_BASE_URL}/unidades/token/{UNIDADE_ID}"
 BASIC_KEY_RAW = "e6fc583511b1b88c34bd2a2610248a8c"
 TOKEN_UNIDADE = None
 
@@ -36,15 +36,15 @@ DISCORD_WEBHOOK = (
 
 USUARIOS_FILE = os.path.join(os.path.dirname(__file__), "usuarios.json")
 
-# ───────────────────── FUNÇÕES AUXILIARES ───────────────────── #
+# ───────────────────── FUNÇÕES ───────────────────── #
 
 def log_discord(msg: str):
     try:
         requests.post(DISCORD_WEBHOOK, json={"content": msg[:1900]})
     except Exception:
-        pass  # se Discord falhar, não interrompe o fluxo
+        pass
 
-def carregar_contador() -> int:
+def carregar_contador():
     if not os.path.exists(USUARIOS_FILE):
         with open(USUARIOS_FILE, "w") as f:
             json.dump({"last_seq": 0}, f)
@@ -55,7 +55,7 @@ def salvar_contador(seq: int):
     with open(USUARIOS_FILE, "w") as f:
         json.dump({"last_seq": seq}, f)
 
-def gerar_usuario() -> str:
+def gerar_usuario():
     seq = carregar_contador() + 1
     salvar_contador(seq)
     return f"202500{seq}{UNIDADE_ID}"
@@ -68,10 +68,8 @@ def obter_token_unidade():
         if data.get("status") == "true":
             TOKEN_UNIDADE = data["data"]["token"]
             log_discord("🔁 Token renovado.")
-        else:
-            log_discord(f"❌ Falha token: {data}")
     except Exception as e:
-        log_discord(f"❌ Exceção token: {e}")
+        log_discord(f"❌ Token erro: {e}")
 
 def extrair_valor(fields, label):
     for f in fields:
@@ -110,7 +108,7 @@ def enviar_whatsapp(numero_br12, msg):
 
 # ───────────────────────── ENDPOINTS ───────────────────────── #
 
-@app.route("/secure", methods=["GET", "HEAD"])
+@app.route("/secure", methods=["GET","HEAD"])
 def secure():
     obter_token_unidade()
     return "🛡️ Secure OK", 200
@@ -122,21 +120,19 @@ def webhook():
         log_discord(f"📥 Webhook:\n```json\n{json.dumps(payload)[:1500]}```")
 
         if payload.get("eventType") != "FORM_RESPONSE":
-            return jsonify({"msg": "ignorado"}), 200
+            return jsonify({"msg":"ignorado"}), 200
 
-        fields    = payload["data"]["fields"]
-        nome      = extrair_valor(fields, "Seu nome completo")
-        whatsapp  = extrair_valor(fields, "Whatsapp")
+        fields   = payload["data"]["fields"]
+        nome     = extrair_valor(fields, "Seu nome completo")
+        whatsapp = extrair_valor(fields, "Whatsapp")
 
         if not (nome and whatsapp):
-            log_discord("❌ Nome ou WhatsApp ausentes")
-            return jsonify({"erro": "dados incompletos"}), 400
+            return jsonify({"erro":"Nome ou WhatsApp ausente"}), 400
 
         cursos_nomes = coletar_cursos(fields)
         planos_ids   = ids_planos(cursos_nomes)
         if not planos_ids:
-            log_discord("❌ Cursos não mapeados")
-            return jsonify({"erro": "cursos inválidos"}), 400
+            return jsonify({"erro":"Cursos não mapeados"}), 400
 
         usuario = gerar_usuario()
         email_ficticio = f"{usuario}@cedbrasil.com"
@@ -148,48 +144,54 @@ def webhook():
             "senha": "123456",
             "email": email_ficticio,
             "doc_cpf": "",
+            "doc_rg": "",
+            "data_nascimento": "2000-01-01",
+            "pais": "Brasil",
+            "uf": "",
+            "cidade": "",
+            "bairro": "",
+            "endereco": "",
+            "numero": "",
+            "complemento": "",
+            "cep": "",
             "fone": whatsapp,
             "celular": whatsapp,
-            "pais": "Brasil",       # ← CAMPO OBRIGATÓRIO ATENDIDO
             "unidade_id": UNIDADE_ID,
             "cursos": ",".join(map(str, planos_ids)),
         }
 
         headers_basic = {"Authorization": f"Basic {BASIC_B64}"}
-
         resp = requests.post(f"{OM_BASE_URL}/alunos", data=cadastro, headers=headers_basic)
 
         try:
             data = resp.json()
         except Exception:
-            log_discord(f"❌ Resposta não JSON: {resp.text}")
-            return jsonify({"erro": "resposta inválida"}), 500
+            log_discord(f"❌ Resposta não-JSON: {resp.text}")
+            return jsonify({"erro":"resposta inválida"}), 500
 
         if not (resp.ok and data.get("status") == "true"):
             log_discord(f"❌ Falha cadastro: {resp.text}")
-            return jsonify({"erro": "cadastro falhou"}), 500
+            return jsonify({"erro":"cadastro falhou"}), 500
 
         # WhatsApp
         numero = "55" + "".join(filter(str.isdigit, whatsapp))[-11:]
-        data_pagto = (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y")
-        lista_cursos = "\n".join(f"• {c}" for c in cursos_nomes)
+        venc   = (datetime.now()+timedelta(days=7)).strftime("%d/%m/%Y")
+        lista  = "\n".join(f"• {c}" for c in cursos_nomes)
 
-        mensagem = (
-            f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
-            f"🔑 *Acesso*\nLogin: *{usuario}*\nSenha: *123456*\n\n"
-            f"📚 *Cursos adquiridos:*\n{lista_cursos}\n\n"
-            f"💳 *Data de pagamento:* {data_pagto}\n\n"
-            "🧑‍🏫 *Grupo da sala:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP"
-        )
+        msg = (f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
+               f"🔑 *Acesso*\nLogin: *{usuario}*\nSenha: *123456*\n\n"
+               f"📚 *Cursos:* \n{lista}\n\n"
+               f"💳 *Data de pagamento:* {venc}\n\n"
+               "🧑‍🏫 *Grupo:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP")
 
-        enviar_whatsapp(numero, mensagem)
-        log_discord(f"✅ Usuário {usuario} matriculado e notificado.")
+        enviar_whatsapp(numero, msg)
+        log_discord(f"✅ Usuário {usuario} matriculado.")
 
-        return jsonify({"status": "ok", "usuario": usuario}), 200
+        return jsonify({"status":"ok","usuario":usuario}), 200
 
     except Exception as e:
         log_discord(f"❌ Exceção: {e}")
-        return jsonify({"erro": "exceção"}), 500
+        return jsonify({"erro":"exceção"}), 500
 
 # ───────────────────────── MAIN ───────────────────────── #
 if __name__ == "__main__":
