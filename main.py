@@ -185,14 +185,14 @@ def webhook():
 
         # WhatsApp
         numero = "55" + "".join(filter(str.isdigit, whatsapp))[-11:]
-        venc   = (datetime.now()+timedelta(days=6)).strftime("%d/%m/%Y")
+        venc   = (datetime.now()+timedelta(days=7)).strftime("%d/%m/%Y")
         lista  = "\n".join(f"• {c}" for c in cursos_nomes)
 
         msg = (f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
                f"🔑 *Acesso*\nLogin: *{usuario}*\nSenha: *123456*\n\n"
                f"📚 *Cursos:* \n{lista}\n\n"
                f"💳 *Data de pagamento:* {venc}\n\n"
-               "🧑‍🏫 *Grupo da Escola/Turma:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP")
+               "🧑‍🏫 *Grupo:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP")
 
         enviar_whatsapp(numero, msg)
         log_discord(f"✅ Usuário {usuario} matriculado e WhatsApp enviado.")
