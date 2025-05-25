@@ -1,12 +1,11 @@
 from flask import Flask, request, jsonify
-import requests, os, json
+import requests, json, re
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# ─────────────── CONFIG ─────────────── #
-
+# ───────────── CONFIGURAÇÕES ───────────── #
 CURSO_PLANO_MAP = {
     "Excel PRO": [161, 197, 201],
     "Design Gráfico": [254, 751, 169],
@@ -19,183 +18,112 @@ CURSO_PLANO_MAP = {
     "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734],
 }
 
-OM_BASE_URL = "https://meuappdecursos.com.br/ws/v2"
-BASIC_B64   = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"
-UNIDADE_ID  = 4158
-TOKEN_URL   = f"{OM_BASE_URL}/unidades/token/{UNIDADE_ID}"
-BASIC_KEY_RAW = "e6fc583511b1b88c34bd2a2610248a8c"
-TOKEN_UNIDADE = None
+OM_BASE = "https://meuappdecursos.com.br/ws/v2"
+UNIDADE_ID = 4158
+TOKEN_KEY  = "e6fc583511b1b88c34bd2a2610248a8c"
+BASIC_B64  = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"
 
 CHATPRO_URL   = "https://v5.chatpro.com.br/chatpro-2a6ajg7xtk/api/v1/send_message"
 CHATPRO_TOKEN = "e10f158f102cd06bb3e8f135e159dd0f"
 
-DISCORD_WEBHOOK = (
-    "https://discord.com/api/webhooks/"
-    "1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
-)
+DISCORD_WEBHOOK = ("https://discord.com/api/webhooks/"
+                   "1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj")
 
-# ─────────────── CONTROLE DE DUPLICIDADE ─────────────── #
-processados = set()
-
-# ─────────────── FUNÇÕES ─────────────── #
-
-def log_discord(msg: str):
+processed_ids = set()
+token_unidade = None
+# ───────────── AUX ───────────── #
+def log(msg):
     try:
         requests.post(DISCORD_WEBHOOK, json={"content": msg[:1900]})
-    except Exception:
-        pass
+    except: pass
 
-def obter_token_unidade():
-    global TOKEN_UNIDADE
-    try:
-        r = requests.get(TOKEN_URL, auth=HTTPBasicAuth(BASIC_KEY_RAW, ""))
-        data = r.json()
-        if data.get("status") == "true":
-            TOKEN_UNIDADE = data["data"]["token"]
-            log_discord("🔁 Token renovado.")
-    except Exception as e:
-        log_discord(f"❌ Erro ao renovar token: {e}")
+def renovar_token():
+    global token_unidade
+    url=f"{OM_BASE}/unidades/token/{UNIDADE_ID}"
+    r=requests.get(url,auth=HTTPBasicAuth(TOKEN_KEY,""))
+    if r.ok and r.json().get("status")=="true":
+        token_unidade=r.json()["data"]["token"]
+        log("🔁 token renovado")
+    else:
+        log(f"❌ token fail {r.text}")
 
-def extrair_valor(fields, label):
+def coletar(fields,label_sub):
+    nomes=[]
     for f in fields:
-        if f.get("label") == label:
-            return str(f.get("value")).strip()
-    return ""
+        if f["type"]=="MULTIPLE_CHOICE" and label_sub in f["label"]:
+            for vid in f.get("value",[]):
+                n=next((o["text"] for o in f["options"] if o["id"]==vid),None)
+                if n: nomes.append(n)
+    return nomes
 
-def mapear_id_para_nome(opt_id, options):
-    for op in options:
-        if op["id"] == opt_id:
-            return op["text"]
-    return None
-
-def coletar_cursos(fields):
-    nomes = []
-    for f in fields:
-        if f["type"] == "MULTIPLE_CHOICE" and "Curso" in f["label"]:
-            for _id in f.get("value", []):
-                nome = mapear_id_para_nome(_id, f.get("options", []))
-                if nome:
-                    nomes.append(nome)
-    return list(set(nomes))
-
-def ids_planos(cursos):
-    ids = []
-    for n in cursos:
-        ids.extend(CURSO_PLANO_MAP.get(n.strip(), []))
+def map_ids(names):
+    ids=[]
+    for n in names:
+        ids+=CURSO_PLANO_MAP.get(n.strip(),[])
     return list(set(ids))
 
-def enviar_whatsapp(numero_br12, msg):
-    headers = {
-        "Authorization": CHATPRO_TOKEN,
-        "Content-Type": "application/json",
-        "accept": "application/json"
-    }
-    payload = {
-        "number": numero_br12,
-        "message": msg
-    }
+def send_whatsapp(num,msg):
+    h={"Authorization":CHATPRO_TOKEN,"Content-Type":"application/json","accept":"application/json"}
+    p={"number":num,"message":msg}
     try:
-        response = requests.post(CHATPRO_URL, json=payload, headers=headers)
-        log_discord(f"📤 WhatsApp enviado: {response.text}")
+        r=requests.post(CHATPRO_URL,json=p,headers=h)
+        log(f"📤 whatsapp {num} {r.status_code} {r.text}")
     except Exception as e:
-        log_discord(f"❌ Erro ao enviar WhatsApp: {e}")
+        log(f"❌ whatsapp err {e}")
 
-# ─────────────── ENDPOINTS ─────────────── #
+# ───────────── ROUTES ───────────── #
+@app.route("/secure")
+def secure(): renovar_token(); return "ok",200
 
-@app.route("/secure", methods=["GET", "HEAD"])
-def secure():
-    obter_token_unidade()
-    return "🛡️ Secure OK", 200
+@app.route("/webhook",methods=["POST"])
+def wb():
+    data=request.json
+    if data.get("eventType")!="FORM_RESPONSE": return{"ok":"ign"},200
+    rid=data["data"]["responseId"]
+    if rid in processed_ids: return {"dup":"ok"},200
+    processed_ids.add(rid)
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    try:
-        payload = request.json
-        log_discord(f"📥 Webhook:\n```json\n{json.dumps(payload)[:1500]}```")
+    f=data["data"]["fields"]
+    nome=next((v["value"] for v in f if v["label"]=="Seu nome completo"),"").strip()
+    whatsapp=next((v["value"] for v in f if v["label"]=="Whatsapp"),"").strip()
+    cpf=str(next((v["value"] for v in f if v["label"]=="CPF"),"")).zfill(11)
 
-        if payload.get("eventType") != "FORM_RESPONSE":
-            return jsonify({"msg": "ignorado"}), 200
+    if not all([nome,whatsapp,cpf]): return{"erro":"falta dado"},400
 
-        response_id = payload["data"].get("responseId")
-        if response_id in processados:
-            return jsonify({"msg": "duplicado"}), 200
-        processados.add(response_id)
+    cursos   = coletar(f,"Curso Desejado") + coletar(f,"Curso extra")
+    planos   = map_ids(cursos)
+    if not planos: return{"erro":"curso nao mapeado"},400
 
-        fields = payload["data"]["fields"]
-        nome     = extrair_valor(fields, "Seu nome completo")
-        whatsapp = extrair_valor(fields, "Whatsapp")
-        cpf      = extrair_valor(fields, "CPF")
+    renovar_token()
 
-        if not (nome and whatsapp and cpf):
-            return jsonify({"erro": "Campos obrigatórios ausentes"}), 400
+    cad={
+      "token":token_unidade,"nome":nome,"usuario":cpf,"senha":"123456",
+      "email":f"{cpf}@ced.com","doc_cpf":cpf,"pais":"Brasil","fone":whatsapp,
+      "celular":whatsapp,"unidade_id":UNIDADE_ID
+    }
+    r=requests.post(f"{OM_BASE}/alunos",data=cad,headers={"Authorization":f"Basic {BASIC_B64}"})
+    if not (r.ok and r.json().get("status")=="true"):
+        log(f"❌ cadastro {r.text}"); return{"erro":"cad"},500
 
-        cursos_nomes = coletar_cursos(fields)
-        planos_ids   = ids_planos(cursos_nomes)
-        if not planos_ids:
-            return jsonify({"erro": "Cursos não mapeados"}), 400
+    aluno_id=r.json()["data"]["id"]
+    mat={"token":token_unidade,"cursos":",".join(map(str,planos))}
+    rm=requests.post(f"{OM_BASE}/alunos/matricula/{aluno_id}",data=mat,
+                     headers={"Authorization":f"Basic {BASIC_B64}"})
+    if not (rm.ok and rm.json().get("status")=="true"):
+        log(f"❌ matricula {rm.text}"); return{"erro":"mat"},500
 
-        usuario         = cpf
-        email_ficticio  = f"{cpf}@cedbrasil.com"
+    num="55"+"".join(re.findall(r"\d",whatsapp))[-11:]
+    vence=(datetime.now()+timedelta(days=7)).strftime("%d/%m/%Y")
+    lista="\n".join(f"• {c}" for c in cursos)
+    msg=(f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
+         f"🔑 *Acesso*\nLogin: *{cpf}*\nSenha: *123456*\n\n"
+         f"📚 *Cursos:* \n{lista}\n\n"
+         f"💳 *Data de pagamento:* {vence}\n\n"
+         "🧑‍🏫 *Grupo:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP")
+    send_whatsapp(num,msg)
+    log(f"✅ {cpf} cadastrado e matriculado em {lista}")
+    return {"ok":"sucesso"},200
 
-        cadastro = {
-            "token": TOKEN_UNIDADE,
-            "nome": nome,
-            "usuario": usuario,
-            "senha": "123456",
-            "email": email_ficticio,
-            "doc_cpf": cpf,
-            "doc_rg": "",
-            "data_nascimento": "2000-01-01",
-            "pais": "Brasil",
-            "uf": "",
-            "cidade": "",
-            "bairro": "",
-            "endereco": "",
-            "numero": "",
-            "complemento": "",
-            "cep": "",
-            "fone": whatsapp,
-            "celular": whatsapp,
-            "unidade_id": UNIDADE_ID,
-            "cursos": ",".join(map(str, planos_ids)),
-        }
-
-        headers_basic = {"Authorization": f"Basic {BASIC_B64}"}
-        resp = requests.post(f"{OM_BASE_URL}/alunos", data=cadastro, headers=headers_basic)
-
-        try:
-            data = resp.json()
-        except Exception:
-            log_discord(f"❌ Resposta não-JSON: {resp.text}")
-            return jsonify({"erro": "resposta inválida"}), 500
-
-        if not (resp.ok and data.get("status") == "true"):
-            log_discord(f"❌ Falha no cadastro: {resp.text}")
-            return jsonify({"erro": "falha ao cadastrar"}), 500
-
-        numero = "55" + "".join(filter(str.isdigit, whatsapp))[-11:]
-        venc   = (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y")
-        lista  = "\n".join(f"• {c}" for c in cursos_nomes)
-
-        msg = (
-            f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
-            f"🔑 *Acesso*\nLogin: *{usuario}*\nSenha: *123456*\n\n"
-            f"📚 *Cursos Adquiridos:* \n{lista}\n\n"
-            f"💳 *Data de pagamento:* {venc}\n\n"
-            "🧑‍🏫 *Grupo: da turma* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP"
-        )
-
-        enviar_whatsapp(numero, msg)
-        log_discord(f"✅ {usuario} cadastrado com cursos: {lista}")
-        return jsonify({"status": "ok", "usuario": usuario}), 200
-
-    except Exception as e:
-        log_discord(f"❌ Exceção geral: {e}")
-        return jsonify({"erro": "exceção"}), 500
-
-# ─────────────── MAIN ─────────────── #
-
-if __name__ == "__main__":
-    obter_token_unidade()
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+if __name__=="__main__":
+    renovar_token()
+    app.run(host="0.0.0.0",port=5000)
