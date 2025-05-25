@@ -1,21 +1,25 @@
 """
-main.py – Webhook Tally → Cadastro & Matrícula + WhatsApp
+main.py – Webhook Tally → Cadastro/Matrícula, WhatsApp e Logs
 
 • Recebe payload do Tally
-• Cria aluno (CPF = usuário / login)
+• CPF vira login do aluno
 • Matricula nos cursos mapeados
 • Envia mensagem de boas-vindas via ChatPro
+• /secure atualiza token da unidade (ping a cada 5 min)
+• Todas as ações registradas no Discord
 """
 
 from flask import Flask, request, jsonify
 import requests
+from requests.auth import HTTPBasicAuth
 from datetime import datetime, timedelta
+import os, json
 
 app = Flask(__name__)
 
-# ──────────────────── CONFIGURAÇÕES ──────────────────── #
+# ───────────────────────── CONFIGURAÇÕES ───────────────────────── #
 
-# Mapeamento “Nome do curso” → lista de IDs (planos/módulos)
+# Mapeamento “Nome do curso” → IDs de planos
 CURSO_PLANO_MAP = {
     "Excel PRO": [161, 197, 201],
     "Design Gráfico": [254, 751, 169],
@@ -25,87 +29,118 @@ CURSO_PLANO_MAP = {
     "Inglês Kids": [266],
     "Informática Essencial": [130, 599, 161, 160, 162],
     "Operador de Micro": [130, 599, 161, 160, 162],
-    "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734],
+    "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734]
 }
 
-# Sua API interna
-API_URL      = "https://suaapi.com.br/alunos"    # ajuste!
-API_TOKEN    = "sua_chave_de_api"                # ajuste!
-UNIDADE_ID   = 4158                              # ajuste!
+# ► API interna da escola
+API_CADASTRO_URL = "https://suaapi.com.br/alunos"        # ajuste!
+API_BEARER_TOKEN = "sua_chave_de_api"                    # ajuste!
+UNIDADE_ID       = 4158
 
-# ChatPro
+# ► Token da unidade (mantido vivo pelo /secure)
+TOKEN_ENDPOINT = "https://meuappdecursos.com.br/ws/v2/unidades/token"
+BASIC_KEY      = "e6fc583511b1b88c34bd2a2610248a8c"
+TOKEN_UNIDADE  = None   # atualizado por obter_token_unidade()
+
+# ► ChatPro
 CHATPRO_ENDPOINT = "https://v5.chatpro.com.br/chatpro-2a6ajg7xtk/send-message"
 CHATPRO_TOKEN    = "e10f158f102cd06bb3e8f135e159dd0f"
 
-# ──────────────────── FUNÇÕES AUXILIARES ──────────────────── #
+# ► Discord log
+DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
 
-def extrair_por_label(fields, label):
-    """Retorna o value de um campo pelo label"""
+# ───────────────────────── FUNÇÕES AUXILIARES ───────────────────────── #
+
+def log_discord(msg: str):
+    """Envia log para Discord"""
+    try:
+        requests.post(DISCORD_WEBHOOK, json={"content": msg[:1900]})
+    except Exception as e:
+        print("Falha log Discord:", e)
+
+def obter_token_unidade():
+    """Atualiza TOKEN_UNIDADE usando BasicAuth"""
+    global TOKEN_UNIDADE
+    try:
+        url = f"{TOKEN_ENDPOINT}/{UNIDADE_ID}"
+        r = requests.get(url, auth=HTTPBasicAuth(BASIC_KEY, ""))
+        data = r.json()
+        if data.get("status") == "true":
+            TOKEN_UNIDADE = data["data"]["token"]
+            log_discord("🔁 Token da unidade atualizado com sucesso.")
+        else:
+            log_discord(f"❌ Falha ao obter token: {data}")
+    except Exception as e:
+        log_discord(f"❌ Exceção ao obter token: {e}")
+
+def extrair_valor(fields, label):
     for f in fields:
         if f.get("label") == label:
             return f.get("value")
     return None
 
-def mapear_id_para_nome(id_opcao, field_options):
-    for opt in field_options:
-        if opt["id"] == id_opcao:
-            return opt["text"]
+def mapear_id_para_nome(opt_id, options):
+    for op in options:
+        if op["id"] == opt_id:
+            return op["text"]
     return None
 
 def coletar_cursos(fields):
-    """Retorna lista de nomes de cursos (principal + extra)"""
     nomes = []
-
     for f in fields:
         if f["type"] == "MULTIPLE_CHOICE" and "Curso" in f["label"]:
-            ids_escolhidos = f.get("value", [])
+            sel = f.get("value", [])
             options = f.get("options", [])
-            for opcao_id in ids_escolhidos:
-                nome = mapear_id_para_nome(opcao_id, options)
+            for _id in sel:
+                nome = mapear_id_para_nome(_id, options)
                 if nome:
                     nomes.append(nome)
+    return list(set(nomes))
 
-    return list(set(nomes))  # remove duplicados
-
-def ids_planos_de(cursos):
-    """Retorna lista única de IDs de planos para os cursos dados"""
+def ids_planos(cursos):
     ids = []
-    for nome in cursos:
-        ids.extend(CURSO_PLANO_MAP.get(nome, []))
+    for n in cursos:
+        ids.extend(CURSO_PLANO_MAP.get(n, []))
     return list(set(ids))
 
 def enviar_whatsapp(numero_br12, mensagem):
-    """Envia mensagem via ChatPro"""
-    payload = {"phone": numero_br12, "message": mensagem}
     headers = {"Authorization": f"Bearer {CHATPRO_TOKEN}",
                "Content-Type": "application/json"}
-    return requests.post(CHATPRO_ENDPOINT, json=payload, headers=headers)
+    requests.post(CHATPRO_ENDPOINT, json={"phone": numero_br12, "message": mensagem},
+                  headers=headers)
 
-# ──────────────────── ENDPOINT WEBHOOK ──────────────────── #
+# ───────────────────────── ENDPOINTS ───────────────────────── #
+
+@app.route("/secure", methods=["GET", "HEAD"])
+def secure():
+    """Ping a cada 5 min → mantém container ativo e renova token"""
+    obter_token_unidade()
+    return "🛡️ Secure ping OK", 200
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
         payload = request.json
+        log_discord(f"📥 Webhook recebido:\n```json\n{json.dumps(payload)[:1500]}```")
+
         if payload.get("eventType") != "FORM_RESPONSE":
-            return jsonify({"erro": "Evento ignorado"}), 200
+            return jsonify({"msg": "Evento ignorado"}), 200
 
         fields = payload["data"]["fields"]
-
-        # Dados básicos
-        nome      = extrair_por_label(fields, "Seu nome completo")
-        whatsapp  = extrair_por_label(fields, "Whatsapp")
-        cpf       = str(extrair_por_label(fields, "CPF"))
+        nome     = extrair_valor(fields, "Seu nome completo")
+        whatsapp = extrair_valor(fields, "Whatsapp")
+        cpf      = str(extrair_valor(fields, "CPF"))
         if not (nome and whatsapp and cpf):
-            return jsonify({"erro": "Nome, WhatsApp ou CPF ausentes"}), 400
+            log_discord("❌ Nome/WhatsApp/CPF ausentes")
+            return jsonify({"erro": "Dados ausentes"}), 400
 
-        # Cursos selecionados → IDs de planos
         cursos_nomes = coletar_cursos(fields)
-        planos_ids   = ids_planos_de(cursos_nomes)
+        planos_ids   = ids_planos(cursos_nomes)
         if not planos_ids:
-            return jsonify({"erro": "Nenhum curso mapeado"}), 400
+            log_discord("❌ Nenhum curso mapeado")
+            return jsonify({"erro": "Cursos inválidos"}), 400
 
-        # CPF será o usuário / login
+        # Montar payload de cadastro (CPF como login)
         cadastro = {
             "nome": nome,
             "usuario": cpf,
@@ -113,41 +148,46 @@ def webhook():
             "cpf": cpf,
             "whatsapp": whatsapp,
             "planos": planos_ids,
-            "unidade_id": UNIDADE_ID
+            "unidade_id": UNIDADE_ID,
+            "token": TOKEN_UNIDADE    # se sua API exigir
         }
 
-        # Chamada para sua API de cadastro/matrícula
-        headers = {"Authorization": f"Bearer {API_TOKEN}", "Content-Type": "application/json"}
-        resp_api = requests.post(API_URL, json=cadastro, headers=headers)
+        headers = {"Authorization": f"Bearer {API_BEARER_TOKEN}",
+                   "Content-Type": "application/json"}
 
-        if resp_api.status_code not in (200, 201):
-            return jsonify({"erro": "Falha no cadastro", "detalhes": resp_api.text}), 500
+        resp = requests.post(API_CADASTRO_URL, json=cadastro, headers=headers)
 
-        # ░▒▓ ENVIAR WHATSAPP ▓▒░
-        num_digits = "".join(filter(str.isdigit, whatsapp))[-11:]  # ddd+numero
-        num_55     = f"55{num_digits}"
+        if resp.status_code not in (200, 201):
+            log_discord(f"❌ Falha cadastro: {resp.text}")
+            return jsonify({"erro": "Cadastro falhou"}), 500
 
+        # WhatsApp
+        numero = "55" + "".join(filter(str.isdigit, whatsapp))[-11:]
         data_pagto = (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y")
-        lista_cursos = "\n".join(f"• {n}" for n in cursos_nomes)
+        lista_cursos = "\n".join(f"• {c}" for c in cursos_nomes)
 
-        msg = (
-            f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
-            f"🔑 *Acesso*\n"
-            f"Login: *{cpf}*\n"
-            f"Senha: *123456*\n\n"
-            f"📚 *Cursos adquiridos:*\n{lista_cursos}\n\n"
-            f"💰 *Data de pagamento:* {data_pagto}\n\n"
-            f"🧑‍🏫 *Grupo da sala de aula:*\n"
-            f"https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP"
-        )
+        mensagem = (f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
+                    f"🔑 *Acesso*\n"
+                    f"Login: *{cpf}*\n"
+                    f"Senha: *123456*\n\n"
+                    f"📚 *Cursos adquiridos:*\n{lista_cursos}\n\n"
+                    f"💳 *Data de pagamento:* {data_pagto}\n\n"
+                    "🧑‍🏫 *Grupo da sala de aula:*\n"
+                    "https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP")
 
-        enviar_whatsapp(num_55, msg)
+        enviar_whatsapp(numero, mensagem)
+        log_discord(f"✅ Aluno {nome} cadastrado, matriculado e notificado.")
 
-        return jsonify({"status": "Aluno cadastrado, matriculado e notificado."}), 200
+        return jsonify({"status": "ok"}), 200
 
     except Exception as e:
-        return jsonify({"erro": "Exceção interna", "detalhes": str(e)}), 500
+        log_discord(f"❌ Exceção geral: {e}")
+        return jsonify({"erro": "Exceção"}), 500
 
-# ──────────────────── MAIN ──────────────────── #
+
+# ───────────────────────── MAIN ───────────────────────── #
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    # ao iniciar, tenta pegar token
+    obter_token_unidade()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
