@@ -159,6 +159,7 @@ def webhook():
             "unidade_id": UNIDADE_ID,
             "cursos": ",".join(map(str, planos_ids)),
             "data_nascimento": "",
+            "doc_rg": "",
         }
 
         headers_basic = {"Authorization": f"Basic {BASIC_B64}"}
