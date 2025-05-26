@@ -101,12 +101,13 @@ def wb():
     # Campos fixos obrigatórios
     data_nasc = "01/01/2000"
     rg        = "0000000"  # valor padrão obrigatório
+    uf        = "DF"  # Substitua por um valor padrão ou extraia dos dados fornecidos
 
     cad={
       "token":token_unidade,"nome":nome,"usuario":cpf,"senha":"123456",
       "email":f"{cpf}@ced.com","doc_cpf":cpf,"doc_rg":rg,
       "pais":"Brasil","fone":whatsapp,"celular":whatsapp,
-      "unidade_id":UNIDADE_ID,"data_nascimento":data_nasc
+      "unidade_id":UNIDADE_ID,"data_nascimento":data_nasc,"uf":uf
     }
     r=requests.post(f"{OM_BASE}/alunos",data=cad,headers={"Authorization":f"Basic {BASIC_B64}"})
     if not (r.ok and r.json().get("status")=="true"):
