@@ -23,8 +23,8 @@ UNIDADE_ID    = 4158
 TOKEN_KEY     = "e6fc583511b1b88c34bd2a2610248a8c"
 BASIC_B64     = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"
 
-CHATPRO_URL   = "https://v5.chatpro.com.br/chatpro-2a6ajg7xtk/api/v1/send_message"
-CHATPRO_TOKEN = "e10f158f102cd06bb3e8f135e159dd0f"
+CHATPRO_URL   = "https://v5.chatpro.com.br/chatpro-h9bsk4dljx/api/v1/send_message"
+CHATPRO_TOKEN = "61de03bbdfbfca09d33ca6c2ec9c73f9"
 
 DISCORD_WEBHOOK = (
     "https://discord.com/api/webhooks/"
