@@ -160,7 +160,7 @@ def webhook():
         return jsonify({"erro":"Falha na matrícula"}), 500
 
     numero = "55" + "".join(re.findall(r"\d", whatsapp))[-11:]
-    vence  = (datetime.now()+timedelta(days=7)).strftime("%d/%m/%Y")
+    vence  = (datetime.now()+timedelta(days=5)).strftime("%d/%m/%Y")
     lista  = "\n".join(f"• {c}" for c in cursos)
 
     msg = (
