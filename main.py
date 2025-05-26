@@ -36,6 +36,7 @@ token_unidade   = None
 
 # ───────────── AUXILIARES ───────────── #
 def log(msg):
+    print(msg)
     try:
         requests.post(DISCORD_WEBHOOK, json={"content": msg[:1900]})
     except:
@@ -45,11 +46,12 @@ def renovar_token():
     global token_unidade
     url = f"{OM_BASE}/unidades/token/{UNIDADE_ID}"
     r = requests.get(url, auth=HTTPBasicAuth(TOKEN_KEY, ""))
+    log(f"[TOKEN] status {r.status_code} body {r.text}")
     if r.ok and r.json().get("status") == "true":
         token_unidade = r.json()["data"]["token"]
         log("🔁 Token renovado")
     else:
-        log(f"❌ Falha ao renovar token: {r.text}")
+        log(f"❌ Falha ao renovar token")
 
 def coletar(fields, label_sub):
     nomes = []
@@ -77,9 +79,9 @@ def send_whatsapp(num, msg):
     payload = {"number": num, "message": msg}
     try:
         r = requests.post(CHATPRO_URL, json=payload, headers=headers)
-        log(f"📤 WhatsApp para {num}: {r.status_code} {r.text}")
+        log(f"[WHATSAPP] {num} status {r.status_code} body {r.text}")
     except Exception as e:
-        log(f"❌ Erro no WhatsApp para {num}: {e}")
+        log(f"❌ Erro no WhatsApp: {e}")
 
 # ───────────── ROTAS ───────────── #
 @app.route("/secure")
@@ -90,6 +92,7 @@ def secure():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     payload = request.json
+    log(f"[WEBHOOK RECEIVED] {json.dumps(payload)[:2000]}")
     if payload.get("eventType") != "FORM_RESPONSE":
         return jsonify({"msg": "ignorado"}), 200
 
@@ -106,22 +109,21 @@ def webhook():
     if not all([nome, whatsapp, cpf]):
         return jsonify({"erro": "Campos obrigatórios ausentes"}), 400
 
-    # Coleta cursos
     cursos_desejados = coletar(fields, "Curso Desejado")
     cursos_extras    = coletar(fields, "Curso extra")
     if not cursos_desejados:
         return jsonify({"erro": "Curso Desejado é obrigatório"}), 400
 
     cursos = cursos_desejados + cursos_extras
+    log(f"Cursos selecionados: {cursos}")
     planos = map_ids(cursos)
     if not planos:
         return jsonify({"erro": "Cursos não mapeados"}), 400
 
     renovar_token()
 
-    # Campos fixos obrigatórios
     data_nascimento = "01/01/2000"
-    doc_rg          = "0000000"  # valor padrão
+    doc_rg          = "0000000"
 
     cadastro = {
         "token": token_unidade,
@@ -138,37 +140,33 @@ def webhook():
         "unidade_id": UNIDADE_ID
     }
 
-    # Cadastro
     r = requests.post(f"{OM_BASE}/alunos", data=cadastro, headers={"Authorization": f"Basic {BASIC_B64}"})
+    log(f"[CADASTRO] status {r.status_code} body {r.text}")
     if not (r.ok and r.json().get("status") == "true"):
-        log(f"❌ Erro no cadastro: {r.text}")
         return jsonify({"erro": "Falha ao cadastrar"}), 500
 
     aluno_id = r.json()["data"]["id"]
 
-    # Matrícula
     matricula = {"token": token_unidade, "cursos": ",".join(map(str, planos))}
     rm = requests.post(f"{OM_BASE}/alunos/matricula/{aluno_id}", data=matricula,
                        headers={"Authorization": f"Basic {BASIC_B64}"})
+    log(f"[MATRICULA] status {rm.status_code} body {rm.text}")
     if not (rm.ok and rm.json().get("status") == "true"):
-        log(f"❌ Erro na matrícula: {rm.text}")
         return jsonify({"erro": "Falha na matrícula"}), 500
 
-    # Envio WhatsApp
     numero = "55" + "".join(re.findall(r"\d", whatsapp))[-11:]
-    venc   = (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y")
-    lista  = "\n".join(f"• {c}" for c in cursos)
+    vence   = (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y")
+    lista   = "\n".join(f"• {c}" for c in cursos)
 
     msg = (
         f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
         f"🔑 *Acesso*\nLogin: *{cpf}*\nSenha: *123456*\n\n"
         f"📚 *Cursos:* \n{lista}\n\n"
-        f"💳 *Data de pagamento:* {venc}\n\n"
+        f"💳 *Data de pagamento:* {vence}\n\n"
         "🧑‍🏫 *Grupo:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP"
     )
     send_whatsapp(numero, msg)
 
-    log(f"✅ {cpf} cadastrado e matriculado em: {lista}")
     return jsonify({"status": "ok", "usuario": cpf}), 200
 
 if __name__ == "__main__":
