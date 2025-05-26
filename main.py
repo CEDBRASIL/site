@@ -92,9 +92,20 @@ def wb():
     if not all([nome,whatsapp,cpf]): return{"erro":"falta dado"},400
 
     cursos = coletar(f,"Curso Desejado")
-    cursos += coletar(f,"Curso extra")  # opcional
+    cursos_extra = coletar(f,"Curso extra")
+
+    if not cursos:
+        log("❌ Nenhum curso desejado selecionado.")
+        return {"erro": "curso desejado obrigatório"}, 400
+
+    cursos += cursos_extra  # Adiciona cursos extras, se houver
     planos = map_ids(cursos)
-    if not planos: return{"erro":"curso nao mapeado"},400
+
+    if not planos:
+        log("❌ Nenhum curso mapeado encontrado.")
+        return {"erro": "curso nao mapeado"}, 400
+
+    log(f"📚 Cursos selecionados: {cursos}")
 
     renovar_token()
 
