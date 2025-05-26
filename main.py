@@ -8,7 +8,7 @@ app = Flask(__name__)
 # ───────────── CONFIGURAÇÕES ───────────── #
 CURSO_PLANO_MAP = {
     "Excel PRO": [161, 197, 201],
-    "Design Gráfico": [254, 751, 169],
+    "Desigh Gráfico": [254, 751, 169],
     "Analise & Desenvolvimento de Sistemas": [590, 176, 239, 203],
     "Administração": [129, 198, 156, 154],
     "Inglês Fluente": [263, 280, 281],
