@@ -31,8 +31,8 @@ DISCORD_WEBHOOK = (
     "1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
 )
 
-processed_ids = set()
 token_unidade = None
+processed_ids = set()
 
 # ───────────── AUXILIARES ───────────── #
 def log(msg):
@@ -75,6 +75,90 @@ def send_whatsapp(num, msg):
     except Exception as e:
         log(f"❌ Erro WhatsApp: {e}")
 
+# ───────────── LÓGICA DE PROCESSAMENTO ───────────── #
+def processar_dados(payload):
+    time.sleep(5)  # Aguarda o servidor estar 100% ativo
+
+    rid = payload["data"].get("responseId")
+    if rid in processed_ids:
+        log(f"[PROCESSAMENTO] Ignorado duplicado: {rid}")
+        return
+    processed_ids.add(rid)
+
+    fields   = payload["data"]["fields"]
+    nome     = next((v["value"] for v in fields if v["label"]=="Seu nome completo"), "").strip()
+    whatsapp = next((v["value"] for v in fields if v["label"]=="Whatsapp"), "").strip()
+    cpf      = str(next((v["value"] for v in fields if v["label"]=="CPF"), "")).zfill(11)
+
+    if not all([nome, whatsapp, cpf]):
+        log("❌ Dados obrigatórios ausentes")
+        return
+
+    cursos_desejados = coletar(fields, "Curso Desejado")
+    if not cursos_desejados:
+        log("❌ Curso Desejado obrigatório")
+        return
+    cursos_extras = coletar(fields, "Curso extra")
+    cursos = cursos_desejados + cursos_extras
+    log(f"[CURSOS] {cursos}")
+
+    planos = map_ids(cursos)
+    if not planos:
+        log("❌ Cursos não mapeados")
+        return
+
+    renovar_token()
+
+    cadastro = {
+        "token": token_unidade,
+        "nome": nome,
+        "usuario": cpf,
+        "senha": "123456",
+        "email": f"{cpf}@ced.com",
+        "doc_cpf": cpf,
+        "doc_rg": "0000000",
+        "data_nascimento": "01/01/2000",
+        "pais": "Brasil",
+        "uf": "DF",
+        "cidade": "",
+        "bairro": "",
+        "endereco": "",
+        "numero": "",
+        "complemento": "",
+        "cep": "",
+        "fone": whatsapp,
+        "celular": whatsapp,
+        "unidade_id": UNIDADE_ID
+    }
+
+    r = requests.post(f"{OM_BASE}/alunos", data=cadastro, headers={"Authorization":f"Basic {BASIC_B64}"})
+    log(f"[CADASTRO] {r.status_code} {r.text}")
+    if not (r.ok and r.json().get("status")=="true"):
+        log("❌ Falha no cadastro")
+        return
+
+    aluno_id = r.json()["data"]["id"]
+    matricula = {"token": token_unidade, "cursos": ",".join(map(str, planos))}
+    rm = requests.post(f"{OM_BASE}/alunos/matricula/{aluno_id}", data=matricula,
+                       headers={"Authorization":f"Basic {BASIC_B64}"})
+    log(f"[MATRICULA] {rm.status_code} {rm.text}")
+    if not (rm.ok and rm.json().get("status")=="true"):
+        log("❌ Falha na matrícula")
+        return
+
+    numero = "55" + "".join(re.findall(r"\d", whatsapp))[-11:]
+    vence  = (datetime.now()+timedelta(days=5)).strftime("%d/%m/%Y")
+    lista  = "\n".join(f"• {c}" for c in cursos)
+
+    msg = (
+        f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
+        f"🔑 *Acesso*\nLogin: *{cpf}*\nSenha: *123456*\n\n"
+        f"📚 *Cursos:* \n{lista}\n\n"
+        f"💳 *Data de pagamento:* {vence}\n\n"
+        "🧑‍🏫 *Grupo:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP"
+    )
+    send_whatsapp(numero, msg)
+
 # ───────────── ROTAS ───────────── #
 @app.route("/secure")
 def secure():
@@ -84,113 +168,14 @@ def secure():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     payload = request.json
-    log(f"[WEBHOOK] {json.dumps(payload)[:2000]}")
+    log(f"[WEBHOOK] {json.dumps(payload)[:1000]}")
 
     if payload.get("eventType") != "FORM_RESPONSE":
-        return jsonify({"msg": "ignorado"}), 200
+        return jsonify({"msg":"ignorado"}), 200
 
-    # Reenvio automático, se ainda não foi reenviado
-    if not payload.get("reenviado"):
-        def reenviar_webhook(dados_originais):
-            time.sleep(10)
-            dados_novos = dict(dados_originais)
-            dados_novos["reenviado"] = True
-            try:
-                r = requests.post("https://ced-api.onrender.com/webhook", json=dados_novos)
-                log(f"[REENVIO] Status: {r.status_code} Body: {r.text}")
-            except Exception as e:
-                log(f"❌ Erro ao reenviar webhook: {e}")
-        threading.Thread(target=reenviar_webhook, args=(payload,)).start()
+    threading.Thread(target=processar_dados, args=(payload,)).start()
+    return jsonify({"msg":"recebido"}), 200
 
-    rid = payload["data"].get("responseId")
-    if rid in processed_ids:
-        return jsonify({"msg": "duplicado"}), 200
-    processed_ids.add(rid)
-
-    fields   = payload["data"]["fields"]
-    nome     = next((v["value"] for v in fields if v["label"]=="Seu nome completo"), "").strip()
-    whatsapp = next((v["value"] for v in fields if v["label"]=="Whatsapp"), "").strip()
-    cpf      = str(next((v["value"] for v in fields if v["label"]=="CPF"), "")).zfill(11)
-
-    if not all([nome, whatsapp, cpf]):
-        return jsonify({"erro":"Dados obrigatórios ausentes"}), 400
-
-    cursos_desejados = coletar(fields, "Curso Desejado")
-    if not cursos_desejados:
-        return jsonify({"erro":"Curso Desejado obrigatório"}), 400
-    cursos_extras = coletar(fields, "Curso extra")
-    cursos = cursos_desejados + cursos_extras
-    log(f"[CURSOS] {cursos}")
-
-    planos = map_ids(cursos)
-    if not planos:
-        return jsonify({"erro":"Cursos não mapeados"}), 400
-
-    renovar_token()
-
-    data_nascimento = "01/01/2000"
-    doc_rg          = "0000000"
-    uf              = "DF"
-    cidade          = ""
-    endereco        = ""
-    bairro          = ""
-    complemento     = ""
-    cep             = ""
-
-    cadastro = {
-        "token": token_unidade,
-        "nome": nome,
-        "usuario": cpf,
-        "senha": "123456",
-        "email": f"{cpf}@ced.com",
-        "doc_cpf": cpf,
-        "doc_rg": doc_rg,
-        "data_nascimento": data_nascimento,
-        "pais": "Brasil",
-        "uf": uf,
-        "cidade": cidade,
-        "bairro": bairro,
-        "endereco": endereco,
-        "numero": "",
-        "complemento": complemento,
-        "cep": cep,
-        "fone": whatsapp,
-        "celular": whatsapp,
-        "unidade_id": UNIDADE_ID
-    }
-
-    r = requests.post(f"{OM_BASE}/alunos", data=cadastro, headers={"Authorization": f"Basic {BASIC_B64}"})
-    log(f"[CADASTRO] {r.status_code} {r.text}")
-    if not (r.ok and r.json().get("status") == "true"):
-        return jsonify({"erro": "Falha no cadastro"}), 500
-
-    aluno_id = r.json()["data"]["id"]
-    matricula = {"token": token_unidade, "cursos": ",".join(map(str, planos))}
-    rm = requests.post(f"{OM_BASE}/alunos/matricula/{aluno_id}", data=matricula,
-                       headers={"Authorization": f"Basic {BASIC_B64}"})
-    log(f"[MATRICULA] {rm.status_code} {rm.text}")
-    if not (rm.ok and rm.json().get("status") == "true"):
-        return jsonify({"erro": "Falha na matrícula"}), 500
-
-    numero = "55" + "".join(re.findall(r"\d", whatsapp))[-11:]
-    vence  = (datetime.now() + timedelta(days=5)).strftime("%d/%m/%Y")
-    lista  = "\n".join(f"• {c}" for c in cursos)
-
-    msg = (
-        f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
-        f"🔑 *Acesso*\nLogin: *{cpf}*\nSenha: *123456*\n\n"
-        f"📚 *Cursos Adquiridos:* \n{lista}\n\n"
-        f"💳 *Data de pagamento:* {vence}\n\n"
-        "🧑‍🏫 *Grupo Da Escola:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP"
-        f"Caso você Queira Trocar ou Adicionar Outros Cursos, Entre em contato conosco por esse número!.\n\n"
-        f"Óbrigado por escolher a CED Cursos! Estamos aqui para ajudar você a alcançar seus objetivos educacionais. \n\n"
-        "Atenciosamente, *Equipe CED*"
-          
-    )
-    send_whatsapp(numero, msg)
-
-    return jsonify({"status": "ok", "usuario": cpf}), 200
-
-if __name__ == "__main__":
+if __name__=="__main__":
     renovar_token()
     app.run(host="0.0.0.0", port=5000)
