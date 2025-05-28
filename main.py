@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CED · Webhook de matrícula
-Versão: 28-mai-2025
+CED · Webhook de matrícula automática
+Versão final: 28-mai-2025
 """
 
 import os, json, re, threading, time, requests, traceback
@@ -21,13 +21,12 @@ CHATPRO_URL      = os.getenv("CHATPRO_URL")
 CHATPRO_TOKEN    = os.getenv("CHATPRO_TOKEN")
 DISCORD_WEBHOOK  = os.getenv("DISCORD_WEBHOOK")
 
-# ───────────── APLICAÇÃO ───────────── #
 app           = Flask(__name__)
 token_unidade = None
 processed_ids = set()
 cpf_lock      = threading.Lock()
 
-# ───────────── MAPA CURSO → PLANOS ───────────── #
+# ───────────── CURSOS → PLANOS ───────────── #
 CURSO_PLANO_MAP = {
     "Excel PRO":                          [161, 197, 201],
     "Desigh Gráfico":                     [254, 751, 169],
@@ -36,17 +35,15 @@ CURSO_PLANO_MAP = {
     "Inglês Fluente":                     [263, 280, 281],
     "Inglês Kids":                        [266],
     "Informática Essencial":              [130, 599, 161, 160, 162],
-    "Operador de Micro":                  [130, 599, 161, 160, 162],
     "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734],
-    "Operador de Micro":                  [123, 414]
 }
 
-# ───────────── UTILITÁRIOS ───────────── #
+# ───────────── FUNÇÕES AUXILIARES ───────────── #
 def log(msg: str):
     print(msg)
     try:
         requests.post(DISCORD_WEBHOOK, json={"content": msg[:1900]})
-    except Exception:
+    except:
         pass
 
 def renovar_token():
@@ -87,8 +84,8 @@ def send_whatsapp(num: str, msg: str):
     except Exception as e:
         log(f"❌ Erro WhatsApp: {e}")
 
-# ───────────── CPF AUTOMÁTICO ───────────── #
-CPF_PREFIXO = "20254158"  # 8 dígitos fixos
+# ───────────── GERAÇÃO AUTOMÁTICA DE CPF ───────────── #
+CPF_PREFIXO = "20254158"
 
 def total_alunos() -> int:
     url = f"{OM_BASE}/alunos/total/{UNIDADE_ID}"
@@ -106,9 +103,9 @@ def proximo_cpf() -> str:
         seq = total_alunos() + 1
         return CPF_PREFIXO + str(seq).zfill(3)
 
-# ───────────── PROCESSAMENTO PRINCIPAL ───────────── #
+# ───────────── PROCESSAMENTO DE INSCRIÇÃO ───────────── #
 def processar_dados(payload: dict):
-    time.sleep(5)  # cold-start safety
+    time.sleep(5)  # cold start
     try:
         rid = payload["data"].get("responseId")
         if rid in processed_ids:
@@ -116,12 +113,12 @@ def processar_dados(payload: dict):
             return
         processed_ids.add(rid)
 
-        fields   = payload["data"]["fields"]
-        nome     = next((v["value"] for v in fields if v["label"] == "Seu nome completo"), "").strip()
-        whatsapp = next((v["value"] for v in fields if v["label"] == "Whatsapp"), "").strip()
+        fields = payload["data"]["fields"]
 
-        # CPF: converte para str antes de strip
-        cpf_val  = next((v["value"] for v in fields if v["label"] == "CPF"), "")
+        # Captura campos com checagem flexível nos labels
+        nome     = next((v["value"] for v in fields if "nome" in v["label"].lower()), "").strip()
+        whatsapp = next((v["value"] for v in fields if "whats" in v["label"].lower()), "").strip()
+        cpf_val  = next((v["value"] for v in fields if "cpf" in v["label"].lower()), "")
         cpf_raw  = str(cpf_val).strip()
         cpf      = cpf_raw.zfill(11) if cpf_raw else proximo_cpf()
 
@@ -165,6 +162,7 @@ def processar_dados(payload: dict):
             "celular":           whatsapp,
             "unidade_id":        UNIDADE_ID
         }
+
         r = requests.post(f"{OM_BASE}/alunos", data=cadastro,
                           headers={"Authorization": f"Basic {BASIC_B64}"})
         log(f"[CADASTRO] {r.status_code} {r.text}")
@@ -220,7 +218,6 @@ def webhook():
     threading.Thread(target=processar_dados, args=(payload,)).start()
     return jsonify({"msg": "recebido"}), 200
 
-# ───────────── MAIN ───────────── #
 if __name__ == "__main__":
     renovar_token()
     app.run(host="0.0.0.0", port=5000)
