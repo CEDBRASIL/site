@@ -2,6 +2,11 @@ from flask import Flask, request, jsonify
 import requests, json, re, threading, time
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timedelta
+import os
+from dotenv import load_dotenv
+
+# Carregar variáveis de ambiente do arquivo .env
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -16,20 +21,16 @@ CURSO_PLANO_MAP = {
     "Informática Essencial": [130, 599, 161, 160, 162],
     "Operador de Micro": [130, 599, 161, 160, 162],
     "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734],
+    "Operador de Micro": [123, 414]
 }
 
-OM_BASE       = "https://meuappdecursos.com.br/ws/v2"
-UNIDADE_ID    = 4158
-TOKEN_KEY     = "e6fc583511b1b88c34bd2a2610248a8c"
-BASIC_B64     = "ZTZmYzU4MzUxMWIxYjg4YzM0YmQyYTI2MTAyNDhhOGM6"
-
-CHATPRO_URL   = "https://v5.chatpro.com.br/chatpro-h9bsk4dljx/api/v1/send_message"
-CHATPRO_TOKEN = "61de03bbdfbfca09d33ca6c2ec9c73f9"
-
-DISCORD_WEBHOOK = (
-    "https://discord.com/api/webhooks/"
-    "1375958173743186081/YCUI_zi3klgvyo9ihgNKli_IaxYeRLV-ScZN9_Q8zxKK4gWAdshKSewHPvfcZ1J5G_Sj"
-)
+OM_BASE       = os.getenv("OM_BASE")
+UNIDADE_ID    = int(os.getenv("UNIDADE_ID"))
+TOKEN_KEY     = os.getenv("TOKEN_KEY")
+BASIC_B64     = os.getenv("BASIC_B64")
+CHATPRO_URL   = os.getenv("CHATPRO_URL")
+CHATPRO_TOKEN = os.getenv("CHATPRO_TOKEN")
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
 
 token_unidade = None
 processed_ids = set()
