@@ -36,6 +36,8 @@ CURSO_PLANO_MAP = {
     "Inglês Kids":                        [266],
     "Informática Essencial":              [130, 599, 161, 160, 162],
     "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734],
+    "Pacote Office": [161, 197, 201, 160, 162],
+
 }
 
 # ───────────── FUNÇÕES AUXILIARES ───────────── #
