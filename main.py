@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 CED · Webhook de matrícula automática
-Versão 29-mai-2025
+Versão 29‑mai‑2025 – com integração CallMeBot
 """
 
 import os, json, re, threading, time, requests, traceback
@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from requests.auth import HTTPBasicAuth
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
+from urllib.parse import quote_plus
 
 # ───────────── CARREGA .env ───────────── #
 load_dotenv()
@@ -20,6 +21,11 @@ BASIC_B64        = os.getenv("BASIC_B64")
 CHATPRO_URL      = os.getenv("CHATPRO_URL")
 CHATPRO_TOKEN    = os.getenv("CHATPRO_TOKEN")
 DISCORD_WEBHOOK  = os.getenv("DISCORD_WEBHOOK")
+
+# CallMeBot
+CALLMEBOT_PHONE  = os.getenv("CALLMEBOT_PHONE", "+556186660241")
+CALLMEBOT_KEY    = os.getenv("CALLMEBOT_KEY", "2712587")
+CALLMEBOT_URL    = "https://api.callmebot.com/whatsapp.php"
 
 app           = Flask(__name__)
 token_unidade = None
@@ -36,17 +42,30 @@ CURSO_PLANO_MAP = {
     "Inglês Kids":                        [266],
     "Informática Essencial":              [130, 599, 161, 160, 162],
     "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734],
-    "Pacote Office": [161, 197, 201, 160, 162],
-
+    "Pacote Office":                      [161, 197, 201, 160, 162],
 }
 
 # ───────────── FUNÇÕES AUXILIARES ───────────── #
+
 def log(msg: str):
     print(msg)
     try:
         requests.post(DISCORD_WEBHOOK, json={"content": msg[:1900]})
     except:
         pass
+
+def notify_admin(msg: str):
+    """Envia mensagem ao responsável via CallMeBot."""
+    try:
+        params = {
+            "phone": CALLMEBOT_PHONE,
+            "text": quote_plus(msg),
+            "apikey": CALLMEBOT_KEY,
+        }
+        r = requests.get(CALLMEBOT_URL, params=params, timeout=10)
+        log(f"[CALLMEBOT] {r.status_code} {r.text}")
+    except Exception as e:
+        log(f"❌ Erro CallMeBot: {e}")
 
 def renovar_token():
     global token_unidade
@@ -102,20 +121,15 @@ def total_alunos() -> int:
     raise RuntimeError("Não foi possível obter o total de alunos.")
 
 def proximo_cpf(incremento: int = 0) -> str:
-    """
-    Gera CPF sequencial com opção de incrementar manualmente.
-    """
+    """Gera CPF sequencial com opção de incrementar manualmente."""
     with cpf_lock:
         seq = total_alunos() + 1 + incremento
         return CPF_PREFIXO + str(seq).zfill(3)
 
 # ───────────── FUNÇÃO DE CADASTRO COM RETENTATIVA ───────────── #
+
 def cadastrar_aluno(cadastro_base: dict, tentativas: int = 60) -> tuple[int|None, str|None]:
-    """
-    Tenta cadastrar o aluno até 'tentativas' vezes.
-    Se encontrar login duplicado, incrementa o CPF e tenta novamente.
-    Retorna (aluno_id, cpf_efetivo) ou (None, None) em caso de falha.
-    """
+    """Tenta cadastrar o aluno até 'tentativas' vezes."""
     for i in range(tentativas):
         cadastro = cadastro_base.copy()
         if i > 0:
@@ -132,7 +146,6 @@ def cadastrar_aluno(cadastro_base: dict, tentativas: int = 60) -> tuple[int|None
         if r.ok and r.json().get("status") == "true":
             return r.json()["data"]["id"], cadastro["usuario"]
 
-        # Se a mensagem não fala em duplicidade, não adianta tentar de novo
         info = (r.json() or {}).get("info", "").lower()
         if "já está em uso" not in info:
             break
@@ -141,6 +154,7 @@ def cadastrar_aluno(cadastro_base: dict, tentativas: int = 60) -> tuple[int|None
     return None, None
 
 # ───────────── PROCESSAMENTO DE INSCRIÇÃO ───────────── #
+
 def processar_dados(payload: dict):
     time.sleep(5)  # cold start
     try:
@@ -202,19 +216,37 @@ def processar_dados(payload: dict):
 
         aluno_id, cpf_final = cadastrar_aluno(cadastro_modelo)
         if not aluno_id:
-            return  # Falha já logada em cadastrar_aluno()
+            return  # Falha já logada
 
         # ---------- Matrícula ----------
-        matricula = {"token": token_unidade,
-                     "cursos": ",".join(map(str, planos))}
+        matricula = {"token": token_unidade, "cursos": ",".join(map(str, planos))}
         rm = requests.post(f"{OM_BASE}/alunos/matricula/{aluno_id}", data=matricula,
                            headers={"Authorization": f"Basic {BASIC_B64}"})
         log(f"[MATRICULA] {rm.status_code} {rm.text}")
-        if not (rm.ok and rm.json().get("status") == "true"):
+
+        if rm.ok and rm.json().get("status") == "true":
+            # Notificação de sucesso
+            admin_msg = (
+                "(Verified) MATRICULA REALIZADA COM SUCESSO\n"
+                f"NOME: {nome}\n"
+                f"LOGIN: {cpf_final}\n"
+                f"CELULAR: {whatsapp}\n"
+                f"CURSOS: {', '.join(cursos)}"
+            )
+            notify_admin(admin_msg)
+        else:
+            # Notificação de erro na matrícula
+            admin_msg = (
+                "❌ ERRO NA MATRÍCULA\n"
+                f"NOME: {nome}\n"
+                f"LOGIN: {cpf_final or cpf}\n"
+                f"MOTIVO: {rm.text[:200]}"
+            )
+            notify_admin(admin_msg)
             log("❌ Falha na matrícula")
             return
 
-        # ---------- WhatsApp ----------
+        # ---------- WhatsApp (Aluno) ----------
         numero = "55" + "".join(re.findall(r"\d", whatsapp))[-11:]
         lista  = "\n".join(f"• {c}" for c in cursos)
         data_pagamento = (datetime.now() + timedelta(days=5)).strftime("%d/%m/%Y")
@@ -236,8 +268,10 @@ def processar_dados(payload: dict):
 
     except Exception as e:
         log(f"❌ Erro inesperado: {e}\n{traceback.format_exc()}")
+        notify_admin(f"❌ ERRO INESPERADO\n{e}")
 
 # ───────────── ROTAS ───────────── #
+
 @app.route("/secure")
 def secure():
     renovar_token()
