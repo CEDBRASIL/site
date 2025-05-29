@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 CED · Webhook de matrícula automática
-Versão 29‑mai‑2025 – com integração CallMeBot
+Versão 29‑mai‑2025 – com integração CED BRASIL
 """
 
 import os, json, re, threading, time, requests, traceback
@@ -21,9 +21,7 @@ BASIC_B64        = os.getenv("BASIC_B64")
 CHATPRO_URL      = os.getenv("CHATPRO_URL")
 CHATPRO_TOKEN    = os.getenv("CHATPRO_TOKEN")
 DISCORD_WEBHOOK  = os.getenv("DISCORD_WEBHOOK")
-
-# CallMeBot
-CALLMEBOT_PHONE  = os.getenv("CALLMEBOT_PHONE", "+556186660241")
+CALLMEBOT_PHONE  = os.getenv("CALLMEBOT_PHONE")
 CALLMEBOT_KEY    = os.getenv("CALLMEBOT_KEY", "2712587")
 CALLMEBOT_URL    = "https://api.callmebot.com/whatsapp.php"
 
