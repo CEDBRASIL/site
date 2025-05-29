@@ -108,7 +108,7 @@ def proximo_cpf(incremento: int = 0) -> str:
         return CPF_PREFIXO + str(seq).zfill(3)
 
 # ───────────── FUNÇÃO DE CADASTRO COM RETENTATIVA ───────────── #
-def cadastrar_aluno(cadastro_base: dict, tentativas: int = 5) -> tuple[int|None, str|None]:
+def cadastrar_aluno(cadastro_base: dict, tentativas: int = 60) -> tuple[int|None, str|None]:
     """
     Tenta cadastrar o aluno até 'tentativas' vezes.
     Se encontrar login duplicado, incrementa o CPF e tenta novamente.
