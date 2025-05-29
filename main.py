@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 CED · Webhook de matrícula automática
-Versão final: 28-mai-2025
+Versão 29-mai-2025
 """
 
 import os, json, re, threading, time, requests, traceback
@@ -92,16 +92,51 @@ def total_alunos() -> int:
     r   = requests.get(url, headers={"Authorization": f"Basic {BASIC_B64}"})
     if r.ok and r.json().get("status") == "true":
         return int(r.json()["data"]["total"])
+    # fallback
     url = f"{OM_BASE}/alunos?unidade_id={UNIDADE_ID}&cpf_like={CPF_PREFIXO}"
     r   = requests.get(url, headers={"Authorization": f"Basic {BASIC_B64}"})
     if r.ok and r.json().get("status") == "true":
         return len(r.json()["data"])
     raise RuntimeError("Não foi possível obter o total de alunos.")
 
-def proximo_cpf() -> str:
+def proximo_cpf(incremento: int = 0) -> str:
+    """
+    Gera CPF sequencial com opção de incrementar manualmente.
+    """
     with cpf_lock:
-        seq = total_alunos() + 1
+        seq = total_alunos() + 1 + incremento
         return CPF_PREFIXO + str(seq).zfill(3)
+
+# ───────────── FUNÇÃO DE CADASTRO COM RETENTATIVA ───────────── #
+def cadastrar_aluno(cadastro_base: dict, tentativas: int = 5) -> tuple[int|None, str|None]:
+    """
+    Tenta cadastrar o aluno até 'tentativas' vezes.
+    Se encontrar login duplicado, incrementa o CPF e tenta novamente.
+    Retorna (aluno_id, cpf_efetivo) ou (None, None) em caso de falha.
+    """
+    for i in range(tentativas):
+        cadastro = cadastro_base.copy()
+        if i > 0:
+            # Incrementa CPF/usuário
+            novo_cpf = str(int(cadastro["usuario"]) + 1).zfill(len(cadastro["usuario"]))
+            cadastro["usuario"] = novo_cpf
+            cadastro["doc_cpf"] = novo_cpf
+            cadastro["email"]  = f"{novo_cpf}@ced.com"
+
+        r = requests.post(f"{OM_BASE}/alunos", data=cadastro,
+                          headers={"Authorization": f"Basic {BASIC_B64}"})
+        log(f"[CADASTRO] tentativa {i+1}/{tentativas} | {r.status_code} {r.text}")
+
+        if r.ok and r.json().get("status") == "true":
+            return r.json()["data"]["id"], cadastro["usuario"]
+
+        # Se a mensagem não fala em duplicidade, não adianta tentar de novo
+        info = (r.json() or {}).get("info", "").lower()
+        if "já está em uso" not in info:
+            break
+
+    log("❌ Falha no cadastro após tentativas")
+    return None, None
 
 # ───────────── PROCESSAMENTO DE INSCRIÇÃO ───────────── #
 def processar_dados(payload: dict):
@@ -118,7 +153,7 @@ def processar_dados(payload: dict):
         # Captura campos com checagem flexível nos labels
         nome     = next((v["value"] for v in fields if "nome" in v["label"].lower()), "").strip()
         whatsapp = next((v["value"] for v in fields if "whats" in v["label"].lower()), "").strip()
-        cpf_val  = next((v["value"] for v in fields if "cpf" in v["label"].lower()), "")
+        cpf_val  = next((v["value"] for v in fields if "cpf"  in v["label"].lower()), "")
         cpf_raw  = str(cpf_val).strip()
         cpf      = cpf_raw.zfill(11) if cpf_raw else proximo_cpf()
 
@@ -141,7 +176,7 @@ def processar_dados(payload: dict):
 
         renovar_token()
 
-        cadastro = {
+        cadastro_modelo = {
             "token":             token_unidade,
             "nome":              nome,
             "usuario":           cpf,
@@ -163,14 +198,11 @@ def processar_dados(payload: dict):
             "unidade_id":        UNIDADE_ID
         }
 
-        r = requests.post(f"{OM_BASE}/alunos", data=cadastro,
-                          headers={"Authorization": f"Basic {BASIC_B64}"})
-        log(f"[CADASTRO] {r.status_code} {r.text}")
-        if not (r.ok and r.json().get("status") == "true"):
-            log("❌ Falha no cadastro")
-            return
+        aluno_id, cpf_final = cadastrar_aluno(cadastro_modelo)
+        if not aluno_id:
+            return  # Falha já logada em cadastrar_aluno()
 
-        aluno_id = r.json()["data"]["id"]
+        # ---------- Matrícula ----------
         matricula = {"token": token_unidade,
                      "cursos": ",".join(map(str, planos))}
         rm = requests.post(f"{OM_BASE}/alunos/matricula/{aluno_id}", data=matricula,
@@ -180,14 +212,14 @@ def processar_dados(payload: dict):
             log("❌ Falha na matrícula")
             return
 
+        # ---------- WhatsApp ----------
         numero = "55" + "".join(re.findall(r"\d", whatsapp))[-11:]
-        vence  = (datetime.now() + timedelta(days=5)).strftime("%d/%m/%Y")
         lista  = "\n".join(f"• {c}" for c in cursos)
 
         msg = (
             f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
-            f"🔑 *Acesso*\nLogin: *{cpf}*\nSenha: *123456*\n\n"
-            f"📚 *Cursos Adquiridos:* \n{lista}\n\n""
+            f"🔑 *Acesso*\nLogin: *{cpf_final}*\nSenha: *123456*\n\n"
+            f"📚 *Cursos Adquiridos:* \n{lista}\n\n"
             "🧑‍🏫 *Grupo da Escola:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP\n\n"
             "📱 *Acesse pelo seu dispositivo preferido:*\n"
             "• *Android:* https://play.google.com/store/apps/details?id=br.com.om.app&hl=pt\n"
