@@ -215,11 +215,12 @@ def processar_dados(payload: dict):
         # ---------- WhatsApp ----------
         numero = "55" + "".join(re.findall(r"\d", whatsapp))[-11:]
         lista  = "\n".join(f"• {c}" for c in cursos)
-
+        data_pagamento = (datetime.now() + timedelta(days=5)).strftime("%d/%m/%Y")
         msg = (
             f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
             f"🔑 *Acesso*\nLogin: *{cpf_final}*\nSenha: *123456*\n\n"
             f"📚 *Cursos Adquiridos:* \n{lista}\n\n"
+            f"💳 *Data de pagamento:* *{data_pagamento}*\n\n"
             "🧑‍🏫 *Grupo da Escola:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP\n\n"
             "📱 *Acesse pelo seu dispositivo preferido:*\n"
             "• *Android:* https://play.google.com/store/apps/details?id=br.com.om.app&hl=pt\n"
