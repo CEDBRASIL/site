@@ -1,90 +1,149 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import os
-import requests
-import mercadopago
-import threading
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+CED · Webhook de matrícula automática
+Versão 29‑mai‑2025 – com integração CED BRASIL
+"""
+
+import os, json, re, threading, time, requests, traceback
+from datetime import datetime, timedelta
+from requests.auth import HTTPBasicAuth
+from flask import Flask, request, jsonify
 from dotenv import load_dotenv
+from urllib.parse import quote_plus
 
+# ───────────── CARREGA .env ───────────── #
 load_dotenv()
+OM_BASE          = os.getenv("OM_BASE")
+UNIDADE_ID       = int(os.getenv("UNIDADE_ID"))
+TOKEN_KEY        = os.getenv("TOKEN_KEY")
+BASIC_B64        = os.getenv("BASIC_B64")
+CHATPRO_URL      = os.getenv("CHATPRO_URL")
+CHATPRO_TOKEN    = os.getenv("CHATPRO_TOKEN")
+DISCORD_WEBHOOK  = os.getenv("DISCORD_WEBHOOK")
+CALLMEBOT_PHONE  = os.getenv("CALLMEBOT_PHONE")
+CALLMEBOT_KEY    = os.getenv("CALLMEBOT_KEY")
+CALLMEBOT_URL    = "https://api.callmebot.com/whatsapp.php"
 
-app = FastAPI()
 
-# Variáveis de ambiente
-OM_BASE = os.getenv("OM_BASE")  # https://meuappdecursos.com.br/ws/v2
-BASIC_B64 = os.getenv("BASIC_B64")  # Authorization
-TOKEN_KEY = os.getenv("TOKEN_KEY")  # Token da unidade
-UNIDADE_ID = os.getenv("UNIDADE_ID")
-MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
-DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
+app           = Flask(__name__)
+token_unidade = None
+processed_ids = set()
+cpf_lock      = threading.Lock()
 
-CPF_PREFIXO = "20254158"
-cpf_lock = threading.Lock()
+# ───────────── CURSOS → PLANOS ───────────── #
+CURSO_PLANO_MAP = {
+    "Excel PRO":                          [161, 197, 201],
+    "Desigh Gráfico":                     [254, 751, 169],
+    "Analise & Desenvolvimento de Sistemas": [590, 176, 239, 203],
+    "Administração":                      [129, 198, 156, 154],
+    "Inglês Fluente":                     [263, 280, 281],
+    "Inglês Kids":                        [266],
+    "Informática Essencial":              [130, 599, 161, 160, 162],
+    "Especialista em Marketing & Vendas": [123, 199, 202, 264, 441, 780, 828, 829, 236, 734],
+    "Pacote Office":                      [161, 197, 201, 160, 162],
+}
 
-# Mercado Pago
-sdk = mercadopago.SDK(MP_ACCESS_TOKEN)
+# ───────────── FUNÇÕES AUXILIARES ───────────── #
 
-class CheckoutData(BaseModel):
-    nome: str
-    whatsapp: str
-    cursos: list[int]
-
-def log(mensagem: str):
+def log(msg: str):
+    print(msg)
     try:
-        print(mensagem)
-        requests.post(DISCORD_WEBHOOK, json={"content": mensagem})
-    except Exception as e:
-        print(f"Erro ao logar no Discord: {e}")
+        requests.post(DISCORD_WEBHOOK, json={"content": msg[:1900]})
+    except:
+        pass
 
-# Função: Total de alunos
+def notify_admin(msg: str):
+    """Envia mensagem ao responsável via CallMeBot."""
+    try:
+        params = {
+            "phone": CALLMEBOT_PHONE,
+            "text": quote_plus(msg),
+            "apikey": CALLMEBOT_KEY,
+        }
+        r = requests.get(CALLMEBOT_URL, params=params, timeout=10)
+        log(f"[CALLMEBOT] {r.status_code} {r.text}")
+    except Exception as e:
+        log(f"❌ Erro CallMeBot: {e}")
+
+def renovar_token():
+    global token_unidade
+    url = f"{OM_BASE}/unidades/token/{UNIDADE_ID}"
+    r   = requests.get(url, auth=HTTPBasicAuth(TOKEN_KEY, ""))
+    log(f"[TOKEN] {r.status_code} {r.text}")
+    if r.ok and r.json().get("status") == "true":
+        token_unidade = r.json()["data"]["token"]
+        log("🔁 Token renovado")
+    else:
+        log("❌ Falha ao renovar token")
+
+def coletar(fields: list, label_sub: str) -> list:
+    nomes = []
+    for f in fields:
+        if f.get("type") == "MULTIPLE_CHOICE" and label_sub in f.get("label", ""):
+            for vid in f.get("value") or []:
+                texto = next((o["text"] for o in f.get("options", []) if o["id"] == vid), None)
+                if texto:
+                    nomes.append(texto)
+    return nomes
+
+def map_ids(names: list) -> list[int]:
+    ids = []
+    for n in names:
+        ids += CURSO_PLANO_MAP.get(n.strip(), [])
+    return list(set(ids))
+
+def send_whatsapp(num: str, msg: str):
+    h = {"Authorization": CHATPRO_TOKEN,
+         "Content-Type": "application/json",
+         "accept": "application/json"}
+    p = {"number": num, "message": msg}
+    try:
+        r = requests.post(CHATPRO_URL, json=p, headers=h)
+        log(f"[WHATSAPP] {num} {r.status_code} {r.text}")
+    except Exception as e:
+        log(f"❌ Erro WhatsApp: {e}")
+
+# ───────────── GERAÇÃO AUTOMÁTICA DE CPF ───────────── #
+CPF_PREFIXO = "20254158"
+
 def total_alunos() -> int:
     url = f"{OM_BASE}/alunos/total/{UNIDADE_ID}"
-    r = requests.get(url, headers={"Authorization": f"Basic {BASIC_B64}"})
+    r   = requests.get(url, headers={"Authorization": f"Basic {BASIC_B64}"})
     if r.ok and r.json().get("status") == "true":
         return int(r.json()["data"]["total"])
     # fallback
     url = f"{OM_BASE}/alunos?unidade_id={UNIDADE_ID}&cpf_like={CPF_PREFIXO}"
-    r = requests.get(url, headers={"Authorization": f"Basic {BASIC_B64}"})
+    r   = requests.get(url, headers={"Authorization": f"Basic {BASIC_B64}"})
     if r.ok and r.json().get("status") == "true":
         return len(r.json()["data"])
     raise RuntimeError("Não foi possível obter o total de alunos.")
 
-# Geração automática de CPF
 def proximo_cpf(incremento: int = 0) -> str:
+    """Gera CPF sequencial com opção de incrementar manualmente."""
     with cpf_lock:
         seq = total_alunos() + 1 + incremento
         return CPF_PREFIXO + str(seq).zfill(3)
 
-# Cadastro com tentativa e email fictício
-def cadastrar_aluno(nome: str, whatsapp: str, tentativas: int = 60) -> tuple[str | None, str | None]:
-    for i in range(tentativas):
-        cpf = proximo_cpf(i)
-        login = cpf
-        email = f"{login}@cedbrasilia.com.br"
-        cadastro = {
-            "token": TOKEN_KEY,
-            "nome": nome,
-            "email": email,
-            "whatsapp": whatsapp,
-            "data_nascimento": "2000-01-01",
-            "fone": whatsapp,
-            "celular": whatsapp,
-            "doc_cpf": cpf,
-            "doc_rg": "000000000",
-            "pais": "Brasil",
-            "uf": "DF",
-            "cidade": "Brasília",
-            "endereco": "Não informado",
-            "complemento": "",
-            "bairro": "Centro",
-            "cep": "70000-000"
-        }
+# ───────────── FUNÇÃO DE CADASTRO COM RETENTATIVA ───────────── #
 
-        r = requests.post(f"{OM_BASE}/alunos", data=cadastro, headers={"Authorization": f"Basic {BASIC_B64}"})
+def cadastrar_aluno(cadastro_base: dict, tentativas: int = 60) -> tuple[int|None, str|None]:
+    """Tenta cadastrar o aluno até 'tentativas' vezes."""
+    for i in range(tentativas):
+        cadastro = cadastro_base.copy()
+        if i > 0:
+            # Incrementa CPF/usuário
+            novo_cpf = str(int(cadastro["usuario"]) + 1).zfill(len(cadastro["usuario"]))
+            cadastro["usuario"] = novo_cpf
+            cadastro["doc_cpf"] = novo_cpf
+            cadastro["email"]  = f"{novo_cpf}@ced.com"
+
+        r = requests.post(f"{OM_BASE}/alunos", data=cadastro,
+                          headers={"Authorization": f"Basic {BASIC_B64}"})
         log(f"[CADASTRO] tentativa {i+1}/{tentativas} | {r.status_code} {r.text}")
 
         if r.ok and r.json().get("status") == "true":
-            return r.json()["data"]["id"], cpf
+            return r.json()["data"]["id"], cadastro["usuario"]
 
         info = (r.json() or {}).get("info", "").lower()
         if "já está em uso" not in info:
@@ -93,51 +152,139 @@ def cadastrar_aluno(nome: str, whatsapp: str, tentativas: int = 60) -> tuple[str
     log("❌ Falha no cadastro após tentativas")
     return None, None
 
-# Matrícula
-def matricular_aluno(aluno_id: str, cursos: list[int]) -> bool:
-    payload = {
-        "token": TOKEN_KEY,
-        "cursos": ",".join(map(str, cursos))
-    }
-    url = f"{OM_BASE}/alunos/matricula/{aluno_id}"
-    r = requests.post(url, data=payload, headers={"Authorization": f"Basic {BASIC_B64}"})
-    log(f"[MATRÍCULA] {r.status_code} {r.text}")
-    return r.ok and r.json().get("status") == "true"
+# ───────────── PROCESSAMENTO DE INSCRIÇÃO ───────────── #
 
-# Preferência Mercado Pago
-def criar_preferencia_mp(titulo: str, preco: float):
-    preference_data = {
-        "items": [
-            {
-                "title": titulo,
-                "quantity": 1,
-                "unit_price": preco
-            }
-        ]
-    }
-    response = sdk.preference().create(preference_data)
-    if response["status"] == 201:
-        return response["response"]["init_point"]
-    return None
+def processar_dados(payload: dict):
+    time.sleep(5)  # cold start
+    try:
+        rid = payload["data"].get("responseId")
+        if rid in processed_ids:
+            log(f"[PROCESSAMENTO] Ignorado duplicado: {rid}")
+            return
+        processed_ids.add(rid)
 
-# Rota principal
-@app.post("/checkout")
-def processar_checkout(data: CheckoutData):
-    aluno_id, usuario = cadastrar_aluno(data.nome, data.whatsapp)
-    if not aluno_id:
-        raise HTTPException(status_code=400, detail="Falha ao cadastrar aluno")
+        fields = payload["data"]["fields"]
 
-    if not matricular_aluno(aluno_id, data.cursos):
-        raise HTTPException(status_code=400, detail="Falha ao matricular aluno")
+        # Captura campos com checagem flexível nos labels
+        nome     = next((v["value"] for v in fields if "nome" in v["label"].lower()), "").strip()
+        whatsapp = next((v["value"] for v in fields if "whats" in v["label"].lower()), "").strip()
+        cpf_val  = next((v["value"] for v in fields if "cpf"  in v["label"].lower()), "")
+        cpf_raw  = str(cpf_val).strip()
+        cpf      = cpf_raw.zfill(11) if cpf_raw else proximo_cpf()
 
-    link = criar_preferencia_mp(f"Matrícula - {data.nome}", 59.90)
-    if not link:
-        raise HTTPException(status_code=500, detail="Falha ao criar link de pagamento")
+        if not all([nome, whatsapp]):
+            log("❌ Dados obrigatórios ausentes (nome ou whatsapp)")
+            return
 
-    log(f"✅ Processo finalizado com sucesso para {data.nome} | Login: {usuario}")
-    return {"status": "sucesso", "aluno_id": aluno_id, "usuario": usuario, "mp_link": link}
+        cursos_desejados = coletar(fields, "Curso Desejado")
+        if not cursos_desejados:
+            log("❌ Curso Desejado obrigatório")
+            return
+        cursos_extras = coletar(fields, "Curso extra")
+        cursos = cursos_desejados + cursos_extras
+        log(f"[CURSOS] {cursos}")
 
-# Rota de verificação
-@app.get("/secure")
-def ping():
-    return {"status": "ativo"}
+        planos = map_ids(cursos)
+        if not planos:
+            log("❌ Cursos não mapeados")
+            return
+
+        renovar_token()
+
+        cadastro_modelo = {
+            "token":             token_unidade,
+            "nome":              nome,
+            "usuario":           cpf,
+            "senha":             "123456",
+            "email":             f"{cpf}@ced.com",
+            "doc_cpf":           cpf,
+            "doc_rg":            "0000000",
+            "data_nascimento":   "01/01/2000",
+            "pais":              "Brasil",
+            "uf":                "DF",
+            "cidade":            "",
+            "bairro":            "",
+            "endereco":          "",
+            "numero":            "",
+            "complemento":       "",
+            "cep":               "",
+            "fone":              whatsapp,
+            "celular":           whatsapp,
+            "unidade_id":        UNIDADE_ID
+        }
+
+        aluno_id, cpf_final = cadastrar_aluno(cadastro_modelo)
+        if not aluno_id:
+            return  # Falha já logada
+
+        # ---------- Matrícula ----------
+        matricula = {"token": token_unidade, "cursos": ",".join(map(str, planos))}
+        rm = requests.post(f"{OM_BASE}/alunos/matricula/{aluno_id}", data=matricula,
+                           headers={"Authorization": f"Basic {BASIC_B64}"})
+        log(f"[MATRICULA] {rm.status_code} {rm.text}")
+
+        if rm.ok and rm.json().get("status") == "true":
+            # Notificação de sucesso
+            admin_msg = (
+                "(Verified) MATRICULA REALIZADA COM SUCESSO\n"
+                f"NOME: {nome}\n"
+                f"LOGIN: {cpf_final}\n"
+                f"CELULAR: {whatsapp}\n"
+                f"CURSOS: {', '.join(cursos)}"
+            )
+            notify_admin(admin_msg)
+        else:
+            # Notificação de erro na matrícula
+            admin_msg = (
+                "❌ ERRO NA MATRÍCULA\n"
+                f"NOME: {nome}\n"
+                f"LOGIN: {cpf_final or cpf}\n"
+                f"MOTIVO: {rm.text[:200]}"
+            )
+            notify_admin(admin_msg)
+            log("❌ Falha na matrícula")
+            return
+
+        # ---------- WhatsApp (Aluno) ----------
+        numero = "55" + "".join(re.findall(r"\d", whatsapp))[-11:]
+        lista  = "\n".join(f"• {c}" for c in cursos)
+        data_pagamento = (datetime.now() + timedelta(days=5)).strftime("%d/%m/%Y")
+        msg = (
+            f"👋 *Seja bem-vindo(a), {nome}!* \n\n"
+            f"🔑 *Acesso*\nLogin: *{cpf_final}*\nSenha: *123456*\n\n"
+            f"📚 *Cursos Adquiridos:* \n{lista}\n\n"
+            f"💳 *Data de pagamento:* *{data_pagamento}*\n\n"
+            "🧑‍🏫 *Grupo da Escola:* https://chat.whatsapp.com/Gzn00RNW15ABBfmTc6FEnP\n\n"
+            "📱 *Acesse pelo seu dispositivo preferido:*\n"
+            "• *Android:* https://play.google.com/store/apps/details?id=br.com.om.app&hl=pt\n"
+            "• *iOS:* https://apps.apple.com/fr/app/meu-app-de-cursos/id1581898914\n"
+            "• *Computador:* https://ead.cedbrasilia.com.br/\n\n"
+            "Caso deseje trocar ou adicionar outros cursos, basta responder a esta mensagem.\n\n"
+            "Obrigado por escolher a *CED Cursos*! Estamos aqui para ajudar nos seus objetivos educacionais.\n\n"
+            "Atenciosamente, *Equipe CED*"
+        )
+        send_whatsapp(numero, msg)
+
+    except Exception as e:
+        log(f"❌ Erro inesperado: {e}\n{traceback.format_exc()}")
+        notify_admin(f"❌ ERRO INESPERADO\n{e}")
+
+# ───────────── ROTAS ───────────── #
+
+@app.route("/secure")
+def secure():
+    renovar_token()
+    return "ok", 200
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    payload = request.json
+    log(f"[WEBHOOK] {json.dumps(payload)[:1000]}")
+    if payload.get("eventType") != "FORM_RESPONSE":
+        return jsonify({"msg": "ignorado"}), 200
+    threading.Thread(target=processar_dados, args=(payload,)).start()
+    return jsonify({"msg": "recebido"}), 200
+
+if __name__ == "__main__":
+    renovar_token()
+    app.run(host="0.0.0.0", port=5000)
